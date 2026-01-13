@@ -8,15 +8,14 @@ const router = Router();
 
 
 router.post('/register', async (req: Request, res: Response) => {
-  const { nome, email, senha, cpf } = req.body;
+  const { nome, email, senha, cpf, telefone } = req.body;
 
   try {
-     if (!nome?.trim() || !email?.trim() || !senha?.trim() || !cpf?.trim()) {
+    if (!nome?.trim() || !email?.trim() || !senha?.trim() || !cpf?.trim() || !telefone?.trim()) {
       return res.status(400).json({ 
-        msg: "Todos os campos (nome, email, senha, cpf) são obrigatórios e não podem estar vazios." 
+        msg: "Todos os campos (nome, email, senha, cpf, telefone) são obrigatórios." 
       });
-     }
-
+    }
     const userExist = await pool.query(
       'SELECT email, cpf FROM users WHERE email = $1 OR cpf = $2', 
       [email, cpf]
@@ -48,9 +47,9 @@ router.post('/register', async (req: Request, res: Response) => {
       const senhaHash = await bcrypt.hash(senha, salt);
 
       const novoUsuario = await pool.query(
-        `INSERT INTO users (nome, email, senha_hash, cpf, tipo_usuario) 
-         VALUES ($1, $2, $3, $4, $5) RETURNING id, nome, email`,
-        [nome, email, senhaHash, cpf, 'cliente'] 
+        `INSERT INTO users (nome, email, senha_hash, cpf, telefone, tipo_usuario) 
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, nome, email, telefone`,
+        [nome, email, senhaHash, cpf, telefone, 'cliente'] 
       );
 
       return res.json({ msg: "Usuário criado com segurança!", user: novoUsuario.rows[0] });
