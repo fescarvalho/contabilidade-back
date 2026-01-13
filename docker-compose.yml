@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  # Serviço do Banco de Dados
+  db:
+    image: postgres:15-alpine
+    container_name: postgres_contabilidade
+    restart: always
+    environment:
+      POSTGRES_USER: fernando
+      POSTGRES_PASSWORD: senha123
+      POSTGRES_DB: contabilidade_db
+    ports:
+      - "5432:5432"
+    volumes:
+      # Isso garante que os dados não sumam quando você desligar o PC
+      - ./pgdata:/var/lib/postgresql/data
+
+  # (Opcional) Interface Gráfica para ver o banco no navegador
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin_contabilidade
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8080:80"
+    depends_on:
+      - db
