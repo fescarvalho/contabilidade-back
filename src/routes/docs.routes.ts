@@ -118,6 +118,46 @@ router.delete('/documentos/:id', verificarToken, async (req: AuthRequest, res: R
   }
 });
 
+// BUSCAR CLIENTE PELO NOME (Busca Parcial)
+router.get('/clientes/buscar', verificarToken, async (req: AuthRequest, res: Response) => {
+  // Pega o nome da URL: /clientes/buscar?nome=joao
+  const nome = (req.query.nome as string)?.trim();
+
+  try {
+    // 1. Segurança: Apenas Admin pode buscar
+    const usuarioLogado = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
+    if (usuarioLogado.rows[0].tipo_usuario !== 'admin') {
+      return res.status(403).json({ msg: "Acesso negado." });
+    }
+
+    if (!nome) {
+        return res.status(400).json({ msg: "Por favor, digite um nome para pesquisar." });
+    }
+
+    // 2. BUSCA INTELIGENTE (ILIKE)
+    // O operador ILIKE faz a busca ignorando maiúsculas/minúsculas.
+    // Os símbolos % significam "qualquer coisa antes ou depois".
+    const resultado = await pool.query(
+      `SELECT id, nome, email, cpf, telefone 
+       FROM users 
+       WHERE tipo_usuario = 'cliente' 
+       AND nome ILIKE $1 
+       ORDER BY nome ASC`,
+      [`%${nome}%`] // Ex: Se digitar "silva", busca por "%silva%"
+    );
+    
+    if (resultado.rows.length === 0) {
+        return res.status(404).json({ msg: "Nenhum cliente encontrado com esse nome." });
+    }
+
+    return res.json(resultado.rows);
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ msg: "Erro ao buscar cliente." });
+  }
+});
+
 
 // LISTAR DADOS E DOCUMENTOS DE UM ÚNICO CLIENTE (Detalhes)
 router.get('/clientes/:id/documentos', verificarToken, async (req: AuthRequest, res: Response) => {
