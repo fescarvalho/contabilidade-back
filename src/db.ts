@@ -1,25 +1,15 @@
-import { Pool } from "pg";
-import dotenv from "dotenv";
+import { Pool } from 'pg';
 
-dotenv.config();
+// --- SOLUÇÃO DIRETA ---
+// Cole a URL do Neon aqui dentro das aspas (a mesma que funcionou no teste)
+const CONNECTION_STRING = process.env.DATABASE_URL;
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL não definida no .env");
-}
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+export const pool = new Pool({
+  connectionString: CONNECTION_STRING,
+  ssl: true
 });
 
-pool.on("connect", () => {
-  console.log("BASE DE DADOS CONECTADA COM SUCESSO!");
-});
-
-pool.on("error", (err) => {
-  console.error("ERRO INESPERADO NO BANCO:", err);
-  process.exit(-1);
-});
-
-export const db = {
-  query: (text: string, params?: any[]) => pool.query(text, params),
-};
+// Teste rápido ao iniciar para garantir
+pool.query('SELECT NOW()')
+  .then(() => console.log("✅ BANCO CONECTADO COM SUCESSO VIA DB.TS"))
+  .catch(err => console.error("❌ ERRO DE CONEXÃO:", err));
