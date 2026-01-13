@@ -102,8 +102,8 @@ router.get('/clientes', verificarToken, async (req: AuthRequest, res: Response) 
      const user = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
      if (user.rows[0].tipo_usuario !== 'admin') return res.status(403).json({ msg: "Acesso negado" });
 
-    const resultado = await pool.query(
-      'SELECT id, nome, email, cpf FROM users WHERE tipo_usuario = $1 ORDER BY nome ASC',
+     const resultado = await pool.query(
+      'SELECT id, nome, email, cpf, telefone FROM users WHERE tipo_usuario = $1 ORDER BY nome ASC',
       ['cliente']
     );
     

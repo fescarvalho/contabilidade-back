@@ -138,7 +138,7 @@ router.get('/clientes/:id/documentos', verificarToken, async (req: AuthRequest, 
         u.nome, 
         u.email, 
         u.cpf,
-        -- Lista de documentos aninhada
+        u.telefone,
         COALESCE(
           json_agg(
             json_build_object(
