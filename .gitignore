@@ -1,1 +1,29 @@
+
+# Dependências do Node (Isso é gigante, nunca suba!)
+node_modules/
+
+# Arquivos de Ambiente (SEGURANÇA MÁXIMA)
 .env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Banco de Dados Docker (Nunca suba os dados brutos do cliente!)
+pgdata/
+
+# Logs de erro e debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs
+*.log
+npm-debug.log
+
+# Arquivos de Sistema Operacional (Lixo do Windows/Mac)
+.DS_Store
+Thumbs.db
+
+# Pastas de IDE (VS Code) - Opcional, mas recomendado
+.vscode/
+.idea/

@@ -4,9 +4,11 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const db = require("./db"); // Importa sua conexão do arquivo db.js
+const multer = require("multer");
+const { put } = require("@vercel/blob");
 
 const app = express();
-
+const upload = multer({ storage: multer.memoryStorage() });
 app.use(express.json()); // Para entender JSON
 app.use(cors()); // Para o seu Front conseguir acessar
 
@@ -80,6 +82,43 @@ app.get("/meus-documentos", verificarToken, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ msg: "Erro ao buscar documentos" });
+  }
+});
+
+app.post("/upload", upload.single("arquivo"), async (req, res) => {
+  // 1. Pega os dados que vieram junto com o arquivo
+  const { cliente_id, titulo } = req.body;
+  const file = req.file;
+
+  // Validações
+  if (!file) return res.status(400).json({ msg: "Nenhum arquivo enviado!" });
+  if (!cliente_id || !titulo)
+    return res.status(400).json({ msg: "Faltou dados do cliente ou titulo!" });
+
+  try {
+    console.log("Iniciando upload para Vercel Blob...");
+
+    // 2. Envia para a Nuvem (Vercel Blob)
+    const blob = await put(file.originalname, file.buffer, {
+      access: "public",
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    });
+
+    console.log("Arquivo salvo na nuvem:", blob.url);
+
+    // 3. Salva o LINK no Banco de Dados
+    const novoDoc = await db.query(
+      "INSERT INTO documents (user_id, titulo, url_arquivo) VALUES ($1, $2, $3) RETURNING *",
+      [cliente_id, titulo, blob.url],
+    );
+
+    res.json({
+      msg: "Arquivo enviado com sucesso!",
+      documento: novoDoc.rows[0],
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: "Erro ao fazer upload" });
   }
 });
 
