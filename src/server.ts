@@ -9,11 +9,10 @@ import docsRoutes from './routes/docs.routes';
 
 const app = express();
 app.use(cors({
-  origin: "*", 
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  origin: "https://leandro-abreu-contabilidade.vercel.app", // SEM A BARRA "/" NO FINAL!
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // Adicione OPTIONS
   credentials: true
-}));
+}))
 
 app.use(express.json());
 app.use(authRoutes);
