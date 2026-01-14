@@ -9,7 +9,11 @@ import docsRoutes from './routes/docs.routes';
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+  origin: ["https://seu-frontend.vercel.app", "http://localhost:5173"],
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true
+}));
 
 app.use(authRoutes);
 app.use(docsRoutes);
