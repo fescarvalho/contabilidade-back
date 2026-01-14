@@ -2,13 +2,17 @@ import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { pool } from "../db";
-import { v4 as uuidv4 } from 'uuid';
+// import { v4 as uuidv4 } from 'uuid'; // Não é mais necessário
 import { del } from "@vercel/blob";
 import { verificarToken, AuthRequest } from "../middlewares/auth";
 import { enviarEmailRecuperacao } from '../services/emailService';
 
 const router = Router();
-const resetTokens = new Map();
+
+// REMOVIDO: const resetTokens = new Map(); // Causava erro na Vercel
+
+// Chave para assinar o token de recuperação (use variável de ambiente em produção)
+const JWT_SECRET = process.env.JWT_SECRET || "sua_chave_super_secreta_aqui";
 
 router.post("/register", async (req: Request, res: Response) => {
   const { nome, email, senha, cpf, telefone } = req.body;
@@ -31,7 +35,6 @@ router.post("/register", async (req: Request, res: Response) => {
     );
 
     if (userExist.rows.length > 0) {
-      // Se encontrou algo, vamos descobrir exatamente o que foi para avisar o utilizador
       const encontrado = userExist.rows[0];
 
       if (encontrado.email === email) {
@@ -53,13 +56,13 @@ router.post("/register", async (req: Request, res: Response) => {
       });
     }
 
-    // --- 3. Cria o Hash e Salva ---
+    // --- Cria o Hash e Salva ---
     const salt = await bcrypt.genSalt(10);
     const senhaHash = await bcrypt.hash(senha, salt);
 
     const novoUsuario = await pool.query(
       `INSERT INTO users (nome, email, senha_hash, cpf, telefone, tipo_usuario) 
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, nome, email, telefone`,
+          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, nome, email, telefone`,
       [nome, email, senhaHash, cpf, telefone, "cliente"],
     );
 
@@ -91,7 +94,6 @@ router.post("/login", async (req: Request, res: Response) => {
     const secret = process.env.JWT_SECRET || "segredo_padrao_teste";
     const token = jwt.sign({ id: user.id }, secret, { expiresIn: "1h" });
 
-    // AQUI ESTÁ O SEU PEDIDO: Retornando o CPF no JSON
     return res.json({
       msg: "Logado com sucesso!",
       token,
@@ -160,16 +162,13 @@ router.delete("/users/:id", verificarToken, async (req: AuthRequest, res: Respon
           await del(doc.url_arquivo, { token: process.env.BLOB_READ_WRITE_TOKEN });
         } catch (error) {
           console.error(`Erro ao apagar arquivo ${doc.url_arquivo}:`, error);
-          // Continuamos o fluxo mesmo se um arquivo der erro, para não travar a deleção do usuário
         }
       }
     }
 
     // 4. APAGAR DADOS DO BANCO
-    // Primeiro removemos os registros de documentos (se não houver CASCADE configurado no banco)
     await pool.query("DELETE FROM documents WHERE user_id = $1", [id]);
 
-    // Finalmente, removemos o usuário
     const deleteUser = await pool.query(
       "DELETE FROM users WHERE id = $1 RETURNING nome",
       [id],
@@ -194,7 +193,6 @@ router.put("/users/:id", verificarToken, async (req: AuthRequest, res: Response)
   const { nome, email, cpf, telefone } = req.body;
 
   try {
-    // 1. SEGURANÇA: Só Admin pode editar
     const adminCheck = await pool.query("SELECT tipo_usuario FROM users WHERE id = $1", [
       req.userId,
     ]);
@@ -204,7 +202,6 @@ router.put("/users/:id", verificarToken, async (req: AuthRequest, res: Response)
         .json({ msg: "Acesso negado. Apenas administradores podem editar usuários." });
     }
 
-    // 2. ATUALIZAÇÃO NO BANCO
     const updateQuery = `
       UPDATE users 
       SET nome = $1, email = $2, cpf = $3, telefone = $4
@@ -224,7 +221,6 @@ router.put("/users/:id", verificarToken, async (req: AuthRequest, res: Response)
     });
   } catch (err) {
     console.error(err);
-    // Tratamento para evitar duplicidade (ex: tentar usar um email que já é de outro)
     if ((err as any).code === "23505") {
       return res
         .status(400)
@@ -234,28 +230,29 @@ router.put("/users/:id", verificarToken, async (req: AuthRequest, res: Response)
   }
 });
 
-// Rota: /forgot-password
+// ======================================================
+// ✅ ROTA 1: Esqueci a Senha (VERSÃO VERCEL/JWT)
+// ======================================================
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
 
   try {
-   
     const result: any = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
     const user = result.rows ? result.rows[0] : result[0];
 
     if (!user) {
+      // Por segurança, às vezes é bom responder OK mesmo se não existir, mas aqui vamos avisar
       return res.status(404).json({ msg: "E-mail não encontrado." });
     }
 
-    // 2. Gera Token
-    const token = uuidv4();
-    resetTokens.set(token, { email, expires: Date.now() + 3600000 });
+    // 2. Gera Token JWT Stateless (Guarda o email e expira em 1 hora)
+    // Isso evita usar memória RAM do servidor (que apaga na Vercel)
+    const token = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: '1h' });
 
     const link = `https://leandro-abreu-contabilidade.vercel.app/redefinir-senha?token=${token}`;
 
-    // 3. ENVIA PELO RESEND
-    console.log(`Enviando para ${email} via Resend...`);
-    
+    // 3. Envia o Email
+    console.log(`Enviando para ${email}...`);
     const sucesso = await enviarEmailRecuperacao(email, link);
 
     if (sucesso) {
@@ -270,38 +267,37 @@ router.post('/forgot-password', async (req, res) => {
   }
 });
 
-// Rota: /reset-password
+// ======================================================
+// ✅ ROTA 2: Resetar a Senha (VERSÃO VERCEL/JWT)
+// ======================================================
 router.post('/reset-password', async (req, res) => {
   const { token, newPassword } = req.body;
 
-  const resetData = resetTokens.get(token);
-
-  if (!resetData || resetData.expires < Date.now()) {
-    return res.status(400).json({ msg: "Token inválido ou expirado." });
-  }
- 
   try {
-   
+    // 1. Valida o Token JWT
+    // Se estiver expirado ou alterado, o verify lança um erro e cai no catch
+    const decoded: any = jwt.verify(token, JWT_SECRET);
+    
+    // Se chegou aqui, o token é válido. Pegamos o email.
+    const email = decoded.email;
+
+    // 2. Criptografa a nova senha
     const salt = await bcrypt.genSalt(10);
     const hash = await bcrypt.hash(newPassword, salt);
 
-   
+    // 3. Atualiza no banco
     await pool.query(
-        "UPDATE users SET senha = $1 WHERE email = $2",
-        [hash, resetData.email]
+        "UPDATE users SET senha_hash = $1 WHERE email = $2",
+        [hash, email]
     );
-
-  
-    resetTokens.delete(token); 
     
     return res.json({ msg: "Senha alterada com sucesso!" });
 
-} catch (error) {
-    console.error("Erro ao atualizar senha:", error);
-    return res.status(500).json({ msg: "Erro ao salvar nova senha." });
-}
-  
-
-
+  } catch (error) {
+    console.error("Erro ao validar token ou atualizar:", error);
+    // Se o erro for do JWT
+    return res.status(400).json({ msg: "O link expirou ou é inválido. Peça um novo." });
+  }
 });
+
 export default router;
