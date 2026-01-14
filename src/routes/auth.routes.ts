@@ -279,30 +279,35 @@ router.post('/forgot-password', async (req, res) => {
 // ✅ ROTA 7: Resetar a Senha (CORRIGIDO PARA VERCEL)
 // ======================================================
 router.post('/reset-password', async (req, res) => {
+  console.log("1. Recebi o pedido de reset");
   const { token, newPassword } = req.body;
 
   try {
-    // 1. VALIDA O JWT E EXTRAI O EMAIL
-    // Se o token for inválido ou expirado, o verify lança erro e cai no catch
+    // 1. Valida Token
+    console.log("2. Validando token...");
     const decoded: any = jwt.verify(token, JWT_SECRET);
     const email = decoded.email;
+    console.log("3. Token OK. Email:", email);
 
-    // 2. CRIA O HASH DA NOVA SENHA
+    // 2. Criptografa Senha
+    console.log("4. Gerando Hash...");
     const salt = await bcrypt.genSalt(10);
     const hash = await bcrypt.hash(newPassword, salt);
+    console.log("5. Hash gerado.");
 
-    // 3. ATUALIZA NO BANCO
+    // 3. Atualiza Banco
+    console.log("6. Atualizando Banco...");
     await pool.query(
         "UPDATE users SET senha_hash = $1 WHERE email = $2",
         [hash, email]
     );
+    console.log("7. Banco atualizado!");
     
     return res.json({ msg: "Senha alterada com sucesso!" });
 
   } catch (error) {
-    console.error("Erro ao validar token:", error);
-    return res.status(400).json({ msg: "O link expirou ou é inválido. Peça um novo." });
+    console.error("❌ ERRO NO RESET:", error); // <--- O erro vai aparecer aqui no Log da Vercel
+    return res.status(400).json({ msg: "Erro ao resetar senha (verifique logs)" });
   }
 });
-
 export default router;
