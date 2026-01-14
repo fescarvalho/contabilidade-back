@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { pool } from "../db";
-// import { v4 as uuidv4 } from 'uuid'; // Não é mais necessário
+// import { v4 as uuidv4 } from 'uuid'; // REMOVIDO: Não vamos usar uuid
 import { del } from "@vercel/blob";
 import { verificarToken, AuthRequest } from "../middlewares/auth";
 import { enviarEmailRecuperacao } from '../services/emailService';
@@ -11,9 +11,13 @@ const router = Router();
 
 // REMOVIDO: const resetTokens = new Map(); // Causava erro na Vercel
 
-// Chave para assinar o token de recuperação (use variável de ambiente em produção)
-const JWT_SECRET = process.env.JWT_SECRET || "sua_chave_super_secreta_aqui";
+// Chave secreta para assinar o token de recuperação
+// (Em produção, garanta que process.env.JWT_SECRET esteja definido)
+const JWT_SECRET = process.env.JWT_SECRET || "sua_chave_super_secreta_recuperacao";
 
+// ======================================================
+// 1. REGISTRO
+// ======================================================
 router.post("/register", async (req: Request, res: Response) => {
   const { nome, email, senha, cpf, telefone } = req.body;
 
@@ -56,7 +60,6 @@ router.post("/register", async (req: Request, res: Response) => {
       });
     }
 
-    // --- Cria o Hash e Salva ---
     const salt = await bcrypt.genSalt(10);
     const senhaHash = await bcrypt.hash(senha, salt);
 
@@ -73,6 +76,9 @@ router.post("/register", async (req: Request, res: Response) => {
   }
 });
 
+// ======================================================
+// 2. LOGIN
+// ======================================================
 router.post("/login", async (req: Request, res: Response) => {
   const { email, senha } = req.body;
 
@@ -83,7 +89,7 @@ router.post("/login", async (req: Request, res: Response) => {
     if (!user) {
       return res.status(400).json({ msg: "E-mail ou senha incorretos." });
     }
-    console.log("📦 O QUE VEIO DO BANCO:", user);
+    // console.log("📦 O QUE VEIO DO BANCO:", user);
   
     const senhaBate = await bcrypt.compare(senha, user.senha_hash);
 
@@ -111,7 +117,9 @@ router.post("/login", async (req: Request, res: Response) => {
   }
 });
 
-// LISTAR TODOS OS CLIENTES (Apenas para o escritório)
+// ======================================================
+// 3. LISTAR CLIENTES (Admin)
+// ======================================================
 router.get("/clientes", verificarToken, async (req: AuthRequest, res: Response) => {
   try {
     const user = await pool.query("SELECT tipo_usuario FROM users WHERE id = $1", [
@@ -132,12 +140,13 @@ router.get("/clientes", verificarToken, async (req: AuthRequest, res: Response) 
   }
 });
 
-// DELETAR USUÁRIO (E TODOS SEUS ARQUIVOS)
+// ======================================================
+// 4. DELETAR USUÁRIO
+// ======================================================
 router.delete("/users/:id", verificarToken, async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const solicitanteId = req.userId;
   try {
-    // 1. SEGURANÇA: Só Admin pode deletar
     const solicitante = await pool.query("SELECT tipo_usuario FROM users WHERE id = $1", [
       req.userId,
     ]);
@@ -149,13 +158,11 @@ router.delete("/users/:id", verificarToken, async (req: AuthRequest, res: Respon
       return res.status(400).json({ msg: "Você não pode deletar sua própria conta." });
     }
 
-    // 3. LIMPEZA PROFUNDA: Buscar arquivos desse cliente para apagar da Vercel
     const arquivosDoCliente = await pool.query(
       "SELECT url_arquivo FROM documents WHERE user_id = $1",
       [id],
     );
 
-    // Loop para apagar cada arquivo da nuvem (Vercel Blob)
     for (const doc of arquivosDoCliente.rows) {
       if (doc.url_arquivo) {
         try {
@@ -166,7 +173,6 @@ router.delete("/users/:id", verificarToken, async (req: AuthRequest, res: Respon
       }
     }
 
-    // 4. APAGAR DADOS DO BANCO
     await pool.query("DELETE FROM documents WHERE user_id = $1", [id]);
 
     const deleteUser = await pool.query(
@@ -187,7 +193,9 @@ router.delete("/users/:id", verificarToken, async (req: AuthRequest, res: Respon
   }
 });
 
-// ATUALIZAR DADOS DO USUÁRIO (Admin Editando Cliente)
+// ======================================================
+// 5. ATUALIZAR USUÁRIO
+// ======================================================
 router.put("/users/:id", verificarToken, async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const { nome, email, cpf, telefone } = req.body;
@@ -231,7 +239,7 @@ router.put("/users/:id", verificarToken, async (req: AuthRequest, res: Response)
 });
 
 // ======================================================
-// ✅ ROTA 1: Esqueci a Senha (VERSÃO VERCEL/JWT)
+// ✅ ROTA 6: Esqueci a Senha (CORRIGIDO PARA VERCEL)
 // ======================================================
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
@@ -241,18 +249,18 @@ router.post('/forgot-password', async (req, res) => {
     const user = result.rows ? result.rows[0] : result[0];
 
     if (!user) {
-      // Por segurança, às vezes é bom responder OK mesmo se não existir, mas aqui vamos avisar
       return res.status(404).json({ msg: "E-mail não encontrado." });
     }
 
-    // 2. Gera Token JWT Stateless (Guarda o email e expira em 1 hora)
-    // Isso evita usar memória RAM do servidor (que apaga na Vercel)
+    // GERA TOKEN JWT (Stateless - Funciona na Vercel)
+    // O token guarda o email criptografado e expira em 1 hora
     const token = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: '1h' });
 
+    // Link para o Front
     const link = `https://leandro-abreu-contabilidade.vercel.app/redefinir-senha?token=${token}`;
 
-    // 3. Envia o Email
     console.log(`Enviando para ${email}...`);
+    
     const sucesso = await enviarEmailRecuperacao(email, link);
 
     if (sucesso) {
@@ -268,24 +276,22 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 // ======================================================
-// ✅ ROTA 2: Resetar a Senha (VERSÃO VERCEL/JWT)
+// ✅ ROTA 7: Resetar a Senha (CORRIGIDO PARA VERCEL)
 // ======================================================
 router.post('/reset-password', async (req, res) => {
   const { token, newPassword } = req.body;
 
   try {
-    // 1. Valida o Token JWT
-    // Se estiver expirado ou alterado, o verify lança um erro e cai no catch
+    // 1. VALIDA O JWT E EXTRAI O EMAIL
+    // Se o token for inválido ou expirado, o verify lança erro e cai no catch
     const decoded: any = jwt.verify(token, JWT_SECRET);
-    
-    // Se chegou aqui, o token é válido. Pegamos o email.
     const email = decoded.email;
 
-    // 2. Criptografa a nova senha
+    // 2. CRIA O HASH DA NOVA SENHA
     const salt = await bcrypt.genSalt(10);
     const hash = await bcrypt.hash(newPassword, salt);
 
-    // 3. Atualiza no banco
+    // 3. ATUALIZA NO BANCO
     await pool.query(
         "UPDATE users SET senha_hash = $1 WHERE email = $2",
         [hash, email]
@@ -294,8 +300,7 @@ router.post('/reset-password', async (req, res) => {
     return res.json({ msg: "Senha alterada com sucesso!" });
 
   } catch (error) {
-    console.error("Erro ao validar token ou atualizar:", error);
-    // Se o erro for do JWT
+    console.error("Erro ao validar token:", error);
     return res.status(400).json({ msg: "O link expirou ou é inválido. Peça um novo." });
   }
 });
