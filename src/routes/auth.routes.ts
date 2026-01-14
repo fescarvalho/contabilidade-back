@@ -2,11 +2,13 @@ import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { pool } from "../db";
-
+import { v4 as uuidv4 } from 'uuid';
 import { del } from "@vercel/blob";
 import { verificarToken, AuthRequest } from "../middlewares/auth";
+import { enviarEmailRecuperacao } from '../services/emailService';
 
 const router = Router();
+const resetTokens = new Map();
 
 router.post("/register", async (req: Request, res: Response) => {
   const { nome, email, senha, cpf, telefone } = req.body;
@@ -72,28 +74,33 @@ router.post("/login", async (req: Request, res: Response) => {
   const { email, senha } = req.body;
 
   try {
-    const resultado = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-    const usuario = resultado.rows[0];
+    const result: any = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    const user = result.rows ? result.rows[0] : result[0];
 
-    if (!usuario) return res.status(400).json({ msg: "Usuário não encontrado" });
+    if (!user) {
+      return res.status(400).json({ msg: "E-mail ou senha incorretos." });
+    }
+    console.log("📦 O QUE VEIO DO BANCO:", user);
+  
+    const senhaBate = await bcrypt.compare(senha, user.senha_hash);
 
-    const senhaValida = await bcrypt.compare(senha, usuario.senha_hash);
-
-    if (!senhaValida) return res.status(400).json({ msg: "Senha incorreta" });
+    if (!senhaBate) {
+      return res.status(400).json({ msg: "E-mail ou senha incorretos." });
+    }
 
     const secret = process.env.JWT_SECRET || "segredo_padrao_teste";
-    const token = jwt.sign({ id: usuario.id }, secret, { expiresIn: "1h" });
+    const token = jwt.sign({ id: user.id }, secret, { expiresIn: "1h" });
 
     // AQUI ESTÁ O SEU PEDIDO: Retornando o CPF no JSON
     return res.json({
       msg: "Logado com sucesso!",
       token,
       user: {
-        id: usuario.id,
-        nome: usuario.nome,
-        email: usuario.email,
-        cpf: usuario.cpf,
-        tipo_usuario: usuario.tipo_usuario,
+        id: user.id,
+        nome: user.nome,
+        email: user.email,
+        cpf: user.cpf,
+        tipo_usuario: user.tipo_usuario,
       },
     });
   } catch (err) {
@@ -227,4 +234,74 @@ router.put("/users/:id", verificarToken, async (req: AuthRequest, res: Response)
   }
 });
 
+// Rota: /forgot-password
+router.post('/forgot-password', async (req, res) => {
+  const { email } = req.body;
+
+  try {
+   
+    const result: any = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    const user = result.rows ? result.rows[0] : result[0];
+
+    if (!user) {
+      return res.status(404).json({ msg: "E-mail não encontrado." });
+    }
+
+    // 2. Gera Token
+    const token = uuidv4();
+    resetTokens.set(token, { email, expires: Date.now() + 3600000 });
+
+    const link = `https://leandro-abreu-contabilidade.vercel.app/redefinir-senha?token=${token}`;
+
+    // 3. ENVIA PELO RESEND
+    console.log(`Enviando para ${email} via Resend...`);
+    
+    const sucesso = await enviarEmailRecuperacao(email, link);
+
+    if (sucesso) {
+        return res.json({ msg: "Link de recuperação enviado para seu e-mail!" });
+    } else {
+        return res.status(500).json({ msg: "Erro ao enviar e-mail. Tente novamente mais tarde." });
+    }
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ msg: "Erro interno." });
+  }
+});
+
+// Rota: /reset-password
+router.post('/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body;
+
+  const resetData = resetTokens.get(token);
+
+  if (!resetData || resetData.expires < Date.now()) {
+    return res.status(400).json({ msg: "Token inválido ou expirado." });
+  }
+ 
+  try {
+   
+    const salt = await bcrypt.genSalt(10);
+    const hash = await bcrypt.hash(newPassword, salt);
+
+   
+    await pool.query(
+        "UPDATE users SET senha = $1 WHERE email = $2",
+        [hash, resetData.email]
+    );
+
+  
+    resetTokens.delete(token); 
+    
+    return res.json({ msg: "Senha alterada com sucesso!" });
+
+} catch (error) {
+    console.error("Erro ao atualizar senha:", error);
+    return res.status(500).json({ msg: "Erro ao salvar nova senha." });
+}
+  
+
+
+});
 export default router;
