@@ -8,13 +8,14 @@ import authRoutes from './routes/auth.routes';
 import docsRoutes from './routes/docs.routes';
 
 const app = express();
-app.use(express.json());
 app.use(cors({
-  origin: ["*"],
+  origin: "*", 
   methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
 }));
 
+app.use(express.json());
 app.use(authRoutes);
 app.use(docsRoutes);
 
