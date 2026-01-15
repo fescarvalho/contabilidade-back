@@ -68,7 +68,7 @@ const gerarHtmlTemplate = (titulo, corpo, link, textoBotao) => {
               <tr>
                 <td bgcolor="#f9f9f9" style="padding: 30px 20px; text-align: center; border-top: 1px solid #eeeeee;">
                   
-                  <img src="${urlImagemRodape}" alt="Leandro Abreu Contabilidade" width="200" style="display: block; margin: 0 auto 20px auto; border: 0; max-width: 100%; height: auto;">
+                <blockquote class="imgur-embed-pub" lang="en" data-id="OjKLLSa"><a href="https://imgur.com/OjKLLSa">View post on imgur.com</a></blockquote><script async src="//s.imgur.com/min/embed.js" charset="utf-8"></script>
 
                   <p style="margin: 0; font-size: 12px; color: #999999; line-height: 1.5;">
                     &copy; ${new Date().getFullYear()} Leandro Abreu Contabilidade.<br>
