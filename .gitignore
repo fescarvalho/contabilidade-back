@@ -27,3 +27,4 @@ Thumbs.db
 # Pastas de IDE (VS Code) - Opcional, mas recomendado
 .vscode/
 .idea/
+/src/generated/prisma

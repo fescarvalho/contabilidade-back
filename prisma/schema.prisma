@@ -1,0 +1,35 @@
+
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model documents {
+  id             Int       @id @default(autoincrement())
+  user_id        Int?
+  titulo         String    @db.VarChar(100)
+  url_arquivo    String
+  nome_original  String?   @db.VarChar(255)
+  tamanho_bytes  BigInt?
+  formato        String?   @db.VarChar(50)
+  data_upload    DateTime? @default(now()) @db.Timestamp(6)
+  visualizado_em DateTime? @db.Timestamp(6)
+  users          users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model users {
+  id           Int         @id @default(autoincrement())
+  nome         String      @db.VarChar(100)
+  email        String      @unique(map: "unique_email") @db.VarChar(100)
+  senha_hash   String      @db.VarChar(255)
+  cpf          String?     @unique(map: "unique_cpf") @db.VarChar(20)
+  criado_em    DateTime?   @default(now()) @db.Timestamp(6)
+  tipo_usuario String?     @default("cliente") @db.VarChar(20)
+  telefone     String?     @db.VarChar(20)
+  documents    documents[]
+}

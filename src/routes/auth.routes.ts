@@ -1,12 +1,13 @@
 import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { pool } from "../db";
+import { prisma } from "../lib/prisma"; // ✅ Importando o Prisma
 import { del } from "@vercel/blob";
 import { verificarToken, AuthRequest } from "../middlewares/auth";
 import { enviarEmailRecuperacao } from '../services/emailService';
 import rateLimit from 'express-rate-limit';
-// --- NOVO: IMPORTAÇÕES DO ZOD ---
+
+// --- IMPORTAÇÕES DO ZOD ---
 import { validate } from "../middlewares/validateResource";
 import { 
   registerSchema, 
@@ -16,56 +17,70 @@ import {
 } from "../schemas/authSchemas";
 
 const router = Router();
+
+// --- CONFIGURAÇÕES ---
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 5, // Só permite 5 tentativas erradas por IP
+  max: 5, 
   message: "Muitas tentativas de login. Conta bloqueada temporariamente por 15 minutos."
 });
-// Chave secreta para assinar o token de recuperação
+
 const JWT_SECRET = process.env.JWT_SECRET || "sua_chave_super_secreta_recuperacao";
 
+// --- HELPER: Verificar Admin (Reutilizável) ---
+const checkAdmin = async (userId: number) => {
+    const user = await prisma.users.findUnique({ 
+        where: { id: userId },
+        select: { tipo_usuario: true }
+    });
+    return user?.tipo_usuario === 'admin';
+};
+
 // ======================================================
-// 1. REGISTRO (Agora protegido pelo Zod)
+// 1. REGISTRO
 // ======================================================
-// Note o uso de 'validate(registerSchema)' aqui na linha abaixo 👇
 router.post("/register", validate(registerSchema), async (req: Request, res: Response) => {
   const { nome, email, senha, cpf, telefone } = req.body;
 
   try {
-    // --- NÃO PRECISA MAIS DOS IFs MANUAIS AQUI! ---
-    // O Zod já garantiu que nome, email, senha, cpf e telefone existem e são válidos.
+    // Verifica duplicidade (Email ou CPF)
+    const usuarioExistente = await prisma.users.findFirst({
+        where: {
+            OR: [
+                { email: email },
+                { cpf: cpf }
+            ]
+        }
+    });
 
-    // Só precisamos checar se já existe no banco (regra de negócio)
-    const userExist = await pool.query(
-      "SELECT email, cpf FROM users WHERE email = $1 OR cpf = $2",
-      [email, cpf],
-    );
-
-    if (userExist.rows.length > 0) {
-      const encontrado = userExist.rows[0];
-
-      if (encontrado.email === email) {
+    if (usuarioExistente) {
+      if (usuarioExistente.email === email) {
         return res.status(400).json({ msg: "Este e-mail já está em uso por outra conta." });
       }
-
-      if (encontrado.cpf === cpf) {
+      if (usuarioExistente.cpf === cpf) {
         return res.status(400).json({ msg: "Este CPF já está cadastrado no sistema." });
       }
     }
 
-    // A validação de senha forte (Regex) também já foi feita pelo Zod!
-
-    // --- Cria o Hash e Salva ---
+    // Cria Hash e Salva
     const salt = await bcrypt.genSalt(10);
     const senhaHash = await bcrypt.hash(senha, salt);
 
-    const novoUsuario = await pool.query(
-      `INSERT INTO users (nome, email, senha_hash, cpf, telefone, tipo_usuario) 
-          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, nome, email, telefone`,
-      [nome, email, senhaHash, cpf, telefone, "cliente"],
-    );
+    const novoUsuario = await prisma.users.create({
+        data: {
+            nome,
+            email,
+            senha_hash: senhaHash,
+            cpf,
+            telefone,
+            tipo_usuario: "cliente"
+        },
+        // Seleciona o que retornar para não mandar a senha de volta
+        select: { id: true, nome: true, email: true, telefone: true }
+    });
 
-    return res.json({ msg: "Usuário criado com segurança!", user: novoUsuario.rows[0] });
+    return res.json({ msg: "Usuário criado com segurança!", user: novoUsuario });
+
   } catch (err) {
     console.error(err);
     return res.status(500).json({ msg: "Erro ao cadastrar" });
@@ -73,14 +88,15 @@ router.post("/register", validate(registerSchema), async (req: Request, res: Res
 });
 
 // ======================================================
-// 2. LOGIN (Agora protegido pelo Zod)
+// 2. LOGIN
 // ======================================================
 router.post("/login", validate(loginSchema), loginLimiter, async (req: Request, res: Response) => {
   const { email, senha } = req.body;
 
   try {
-    const result: any = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-    const user = result.rows ? result.rows[0] : result[0];
+    const user = await prisma.users.findUnique({
+        where: { email: email }
+    });
 
     if (!user) {
       return res.status(400).json({ msg: "E-mail ou senha incorretos." });
@@ -92,6 +108,7 @@ router.post("/login", validate(loginSchema), loginLimiter, async (req: Request, 
       return res.status(400).json({ msg: "E-mail ou senha incorretos." });
     }
     
+    // Gera Token
     const secret = process.env.JWT_SECRET || "segredo_padrao_teste";
     const token = jwt.sign({ id: user.id }, secret, { expiresIn: "1h" });
 
@@ -106,6 +123,7 @@ router.post("/login", validate(loginSchema), loginLimiter, async (req: Request, 
         tipo_usuario: user.tipo_usuario,
       },
     });
+
   } catch (err) {
     console.error(err);
     return res.status(500).json({ msg: "Erro no servidor" });
@@ -117,18 +135,17 @@ router.post("/login", validate(loginSchema), loginLimiter, async (req: Request, 
 // ======================================================
 router.get("/clientes", verificarToken, async (req: AuthRequest, res: Response) => {
   try {
-    const user = await pool.query("SELECT tipo_usuario FROM users WHERE id = $1", [
-      req.userId,
-    ]);
-    if (user.rows[0].tipo_usuario !== "admin")
-      return res.status(403).json({ msg: "Acesso negado" });
+    if (!req.userId || !(await checkAdmin(req.userId))) {
+        return res.status(403).json({ msg: "Acesso negado" });
+    }
 
-    const resultado = await pool.query(
-      "SELECT id, nome, email, cpf, telefone FROM users WHERE tipo_usuario = $1 ORDER BY nome ASC",
-      ["cliente"],
-    );
+    const clientes = await prisma.users.findMany({
+        where: { tipo_usuario: "cliente" },
+        orderBy: { nome: "asc" },
+        select: { id: true, nome: true, email: true, cpf: true, telefone: true }
+    });
 
-    return res.json(resultado.rows);
+    return res.json(clientes);
   } catch (err) {
     console.error(err);
     return res.status(500).json({ msg: "Erro ao listar clientes" });
@@ -141,11 +158,9 @@ router.get("/clientes", verificarToken, async (req: AuthRequest, res: Response) 
 router.delete("/users/:id", verificarToken, async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const solicitanteId = req.userId;
+
   try {
-    const solicitante = await pool.query("SELECT tipo_usuario FROM users WHERE id = $1", [
-      req.userId,
-    ]);
-    if (solicitante.rows.length === 0 || solicitante.rows[0].tipo_usuario !== "admin") {
+    if (!solicitanteId || !(await checkAdmin(solicitanteId))) {
       return res.status(403).json({ msg: "Acesso negado. Apenas administradores." });
     }
 
@@ -153,12 +168,13 @@ router.delete("/users/:id", verificarToken, async (req: AuthRequest, res: Respon
       return res.status(400).json({ msg: "Você não pode deletar sua própria conta." });
     }
 
-    const arquivosDoCliente = await pool.query(
-      "SELECT url_arquivo FROM documents WHERE user_id = $1",
-      [id],
-    );
+    // 1. Busca arquivos do cliente para apagar do Blob (Vercel)
+    const arquivosDoCliente = await prisma.documents.findMany({
+        where: { user_id: Number(id) },
+        select: { url_arquivo: true }
+    });
 
-    for (const doc of arquivosDoCliente.rows) {
+    for (const doc of arquivosDoCliente) {
       if (doc.url_arquivo) {
         try {
           await del(doc.url_arquivo, { token: process.env.BLOB_READ_WRITE_TOKEN });
@@ -168,20 +184,29 @@ router.delete("/users/:id", verificarToken, async (req: AuthRequest, res: Respon
       }
     }
 
-    await pool.query("DELETE FROM documents WHERE user_id = $1", [id]);
+    // 2. Apaga registros de documentos no banco
+    await prisma.documents.deleteMany({
+        where: { user_id: Number(id) }
+    });
 
-    const deleteUser = await pool.query(
-      "DELETE FROM users WHERE id = $1 RETURNING nome",
-      [id],
-    );
-
-    if (deleteUser.rowCount === 0) {
-      return res.status(404).json({ msg: "Usuário não encontrado." });
+    // 3. Apaga o usuário
+    // O Prisma lança erro se não achar, então usamos try/catch ou verificamos antes.
+    // O delete lança erro se o registro não existir.
+    try {
+        const usuarioDeletado = await prisma.users.delete({
+            where: { id: Number(id) },
+            select: { nome: true }
+        });
+        return res.json({
+            msg: `Usuário ${usuarioDeletado.nome} e todos os seus arquivos foram removidos com sucesso.`,
+        });
+    } catch (e: any) {
+        if (e.code === 'P2025') { // Código Prisma para "Record not found"
+            return res.status(404).json({ msg: "Usuário não encontrado." });
+        }
+        throw e;
     }
 
-    return res.json({
-      msg: `Usuário ${deleteUser.rows[0].nome} e todos os seus arquivos foram removidos com sucesso.`,
-    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ msg: "Erro ao deletar usuário." });
@@ -196,52 +221,44 @@ router.put("/users/:id", verificarToken, async (req: AuthRequest, res: Response)
   const { nome, email, cpf, telefone } = req.body;
 
   try {
-    const adminCheck = await pool.query("SELECT tipo_usuario FROM users WHERE id = $1", [
-      req.userId,
-    ]);
-    if (adminCheck.rows[0].tipo_usuario !== "admin") {
-      return res
-        .status(403)
-        .json({ msg: "Acesso negado. Apenas administradores podem editar usuários." });
+    if (!req.userId || !(await checkAdmin(req.userId))) {
+      return res.status(403).json({ msg: "Acesso negado. Apenas administradores." });
     }
 
-    const updateQuery = `
-      UPDATE users 
-      SET nome = $1, email = $2, cpf = $3, telefone = $4
-      WHERE id = $5
-      RETURNING id, nome, email, cpf, telefone, tipo_usuario
-    `;
-
-    const updatedUser = await pool.query(updateQuery, [nome, email, cpf, telefone, id]);
-
-    if (updatedUser.rowCount === 0) {
-      return res.status(404).json({ msg: "Usuário não encontrado." });
-    }
+    const updatedUser = await prisma.users.update({
+        where: { id: Number(id) },
+        data: { nome, email, cpf, telefone },
+        select: { id: true, nome: true, email: true, cpf: true, telefone: true, tipo_usuario: true }
+    });
 
     return res.json({
       msg: "Dados atualizados com sucesso!",
-      user: updatedUser.rows[0],
+      user: updatedUser,
     });
-  } catch (err) {
+
+  } catch (err: any) {
     console.error(err);
-    if ((err as any).code === "23505") {
-      return res
-        .status(400)
-        .json({ msg: "Erro: Email ou CPF já cadastrado em outra conta." });
+    // P2002 é o código do Prisma para violação de Unique Constraint (Email ou CPF já existe)
+    if (err.code === "P2002") {
+      return res.status(400).json({ msg: "Erro: Email ou CPF já cadastrado em outra conta." });
+    }
+    if (err.code === "P2025") {
+        return res.status(404).json({ msg: "Usuário não encontrado." });
     }
     return res.status(500).json({ msg: "Erro ao atualizar usuário." });
   }
 });
 
 // ======================================================
-// 6. ESQUECI A SENHA (Agora protegido pelo Zod)
+// 6. ESQUECI A SENHA
 // ======================================================
-router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res) => {
+router.post('/forgot-password', validate(forgotPasswordSchema), async (req: Request, res: Response) => {
   const { email } = req.body;
 
   try {
-    const result: any = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-    const user = result.rows ? result.rows[0] : result[0];
+    const user = await prisma.users.findUnique({
+        where: { email }
+    });
 
     if (!user) {
       return res.status(404).json({ msg: "E-mail não encontrado." });
@@ -267,13 +284,13 @@ router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res)
 });
 
 // ======================================================
-// 7. RESETAR SENHA (Agora protegido pelo Zod)
+// 7. RESETAR SENHA
 // ======================================================
-router.post('/reset-password', validate(resetPasswordSchema), async (req, res) => {
+router.post('/reset-password', validate(resetPasswordSchema), async (req: Request, res: Response) => {
   const { token, newPassword } = req.body;
 
   try {
-    // 1. Valida Token e Pega Email
+    // 1. Valida Token
     const decoded: any = jwt.verify(token, JWT_SECRET);
     const email = decoded.email;
 
@@ -282,10 +299,10 @@ router.post('/reset-password', validate(resetPasswordSchema), async (req, res) =
     const hash = await bcrypt.hash(newPassword, salt);
 
     // 3. Atualiza Banco
-    await pool.query(
-        "UPDATE users SET senha_hash = $1 WHERE email = $2",
-        [hash, email]
-    );
+    await prisma.users.update({
+        where: { email: email },
+        data: { senha_hash: hash }
+    });
     
     return res.json({ msg: "Senha alterada com sucesso!" });
 

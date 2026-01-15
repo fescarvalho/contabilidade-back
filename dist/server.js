@@ -12,6 +12,9 @@ const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const docs_routes_1 = __importDefault(require("./routes/docs.routes"));
 const helmet_1 = __importDefault(require("helmet"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
+BigInt.prototype.toJSON = function () {
+    return Number(this);
+};
 const app = (0, express_1.default)();
 app.use((0, helmet_1.default)());
 const limiter = (0, express_rate_limit_1.default)({

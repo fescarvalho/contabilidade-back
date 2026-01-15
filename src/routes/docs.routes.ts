@@ -1,10 +1,10 @@
 import { Router, Response } from 'express';
 import multer from 'multer';
 import { put, del } from '@vercel/blob';
-import { pool } from '../db';
+import { prisma } from '../lib/prisma'; // ✅ Importando o Prisma Client
+import { DocumentRepository } from '../repositories/DocumentRepository';
 import { enviarEmailNovoDocumento } from '../services/emailService';
 import { verificarToken, AuthRequest } from '../middlewares/auth';
-
 
 import { validate } from '../middlewares/validateResource';
 import { 
@@ -17,34 +17,39 @@ import {
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
+// --- HELPER: Serializar BigInt para JSON ---
+// (Evita erro "Do not know how to serialize a BigInt")
+const serializeBigInt = (data: any) => {
+    return JSON.parse(JSON.stringify(data, (_, v) => 
+        typeof v === 'bigint' ? v.toString() : v
+    ));
+};
+
+// --- HELPER: Verificar se é Admin ---
+const checkAdmin = async (userId: number) => {
+    const user = await prisma.users.findUnique({ 
+        where: { id: userId },
+        select: { tipo_usuario: true }
+    });
+    return user?.tipo_usuario === 'admin';
+};
+
 // ======================================================
 // 1. LISTAR MEUS DOCUMENTOS (Cliente Logado)
 // ======================================================
-// ======================================================
-// 1. LISTAR MEUS DOCUMENTOS (COM FILTRO DE DATA)
-// ======================================================
 router.get('/meus-documentos', verificarToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { month, year } = req.query; // Pega da URL: ?month=01&year=2026
+    if (!req.userId) return res.status(401).json({ msg: "Usuário não identificado." });
 
-    let query = `
-      SELECT id, user_id, titulo, url_arquivo, nome_original, tamanho_bytes, formato, data_upload, visualizado_em 
-      FROM documents 
-      WHERE user_id = $1
-    `;
-    const params: any[] = [req.userId];
+    const { month, year } = req.query;
 
-    // Se tiver mês E ano, aplica o filtro
-    if (month && year) {
-        // $2 e $3 serão o mês e o ano
-        query += ` AND EXTRACT(MONTH FROM data_upload) = $2 AND EXTRACT(YEAR FROM data_upload) = $3`;
-        params.push(month, year);
-    }
-
-    query += ` ORDER BY data_upload DESC`;
-
-    const resultado = await pool.query(query, params);
-    return res.json(resultado.rows);
+    const documentos = await DocumentRepository.findByUserId(
+        req.userId, 
+        month as string | undefined, 
+        year as string | undefined
+    );
+    
+    return res.json(serializeBigInt(documentos));
 
   } catch (err) {
     console.error(err);
@@ -63,9 +68,7 @@ router.post(
   async (req: AuthRequest, res: Response) => {
   
   try {
-    // 1. Validação: Só Admin pode enviar
-    const usuarioLogado = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
-    if (usuarioLogado.rows[0].tipo_usuario !== 'admin') {
+    if (!req.userId || !(await checkAdmin(req.userId))) {
         return res.status(403).json({ msg: "Acesso negado. Apenas admins." });
     }
 
@@ -74,16 +77,14 @@ router.post(
 
     if (!file) return res.status(400).json({ msg: "Selecione um arquivo para enviar." });
 
-    // ✅ Verifica se o cliente existe e pega o EMAIL
-    const checkCliente = await pool.query(
-        'SELECT id, nome, email FROM users WHERE id = $1', 
-        [cliente_id]
-    );
+    // ✅ Verifica se o cliente existe e pega o EMAIL com Prisma
+    const dadosCliente = await prisma.users.findUnique({
+        where: { id: Number(cliente_id) },
+        select: { id: true, nome: true, email: true }
+    });
 
-    if (checkCliente.rowCount === 0) {
-        return res.status(404).json({ 
-            msg: `Erro: O cliente com ID ${cliente_id} não existe.` 
-        });
+    if (!dadosCliente) {
+        return res.status(404).json({ msg: `Erro: O cliente com ID ${cliente_id} não existe.` });
     }
 
     // Upload para a Vercel Blob
@@ -93,42 +94,31 @@ router.post(
         addRandomSuffix: true
     });
 
-    // Salva no banco (Agora inclui visualizado_em como NULL por padrão, mas é bom garantir na query se não tiver default no banco)
-    const novoDoc = await pool.query(
-        `INSERT INTO documents 
-        (user_id, titulo, url_arquivo, nome_original, tamanho_bytes, formato) 
-        VALUES ($1, $2, $3, $4, $5, $6) 
-        RETURNING *`,
-        [cliente_id, titulo, blob.url, file.originalname, file.size, file.mimetype]
-    );
+    // ✅ Salva no banco usando o Repositório
+    const novoDoc = await DocumentRepository.create({
+        userId: Number(cliente_id),
+        titulo: titulo,
+        url: blob.url,
+        nomeOriginal: file.originalname,
+        tamanho: file.size,
+        formato: file.mimetype
+    });
 
-    // ✅ ENVIO DE E-MAIL SEGURO
-    const dadosCliente = checkCliente.rows[0];
-    
+    // ✅ ENVIO DE E-MAIL
     if (dadosCliente.email) {
-        try {
-            console.log(`Enviando aviso para ${dadosCliente.email}...`);
-            // O await aqui é opcional se não quiser travar a resposta, mas garante o log correto
-            enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo)
-                .then(() => console.log("Aviso enviado."))
-                .catch(err => console.error("Erro assíncrono no envio:", err));
-        } catch (emailErr) {
-            console.error("Erro no envio de email:", emailErr);
-        }
+        enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo)
+            .catch(err => console.error("Erro assíncrono no envio de e-mail:", err));
     } else {
         console.warn(`Cliente ${dadosCliente.nome} não tem e-mail cadastrado.`);
     }
 
     return res.json({ 
         msg: `Arquivo enviado para ${dadosCliente.nome} com sucesso!`, 
-        documento: novoDoc.rows[0] 
+        documento: serializeBigInt(novoDoc)
     });
   
   } catch (err) {
     console.error(err);
-    if ((err as any).code === '22P02') {
-        return res.status(400).json({ msg: "O ID do cliente precisa ser um número." });
-    }
     return res.status(500).json({ msg: "Erro no servidor" });
   }
 });
@@ -140,32 +130,28 @@ router.delete('/documentos/:id', verificarToken, validate(deleteDocumentSchema),
   const { id } = req.params;
 
   try {
-    const usuarioLogado = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
-    
-    if (usuarioLogado.rows[0].tipo_usuario !== 'admin') {
+    if (!req.userId || !(await checkAdmin(req.userId))) {
       return res.status(403).json({ msg: "Acesso negado." });
     }
 
-    const documento = await pool.query('SELECT * FROM documents WHERE id = $1', [id]);
+    // ✅ Busca o documento para pegar a URL (para deletar do Blob)
+    const documento = await DocumentRepository.findById(Number(id));
     
-    if (documento.rowCount === 0) {
+    if (!documento) {
       return res.status(404).json({ msg: "Documento não encontrado." });
     }
 
-    const arquivoParaDeletar = documento.rows[0];
-
     // Apagar da Vercel
-    if (arquivoParaDeletar.url_arquivo) {
+    if (documento.url_arquivo) {
         try {
-            await del(arquivoParaDeletar.url_arquivo, {
-                token: process.env.BLOB_READ_WRITE_TOKEN
-            });
+            await del(documento.url_arquivo, { token: process.env.BLOB_READ_WRITE_TOKEN });
         } catch (error) {
             console.error("Erro ao apagar do Blob:", error);
         }
     }
 
-    await pool.query('DELETE FROM documents WHERE id = $1', [id]);
+    // ✅ Deleta do banco com Prisma
+    await DocumentRepository.delete(Number(id));
 
     return res.json({ msg: "Documento apagado com sucesso." });
 
@@ -182,22 +168,24 @@ router.get('/clientes/buscar', verificarToken, validate(searchClientSchema), asy
   const nome = (req.query.nome as string).trim();
 
   try {
-    const usuarioLogado = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
-    if (usuarioLogado.rows[0].tipo_usuario !== 'admin') {
+    if (!req.userId || !(await checkAdmin(req.userId))) {
       return res.status(403).json({ msg: "Acesso negado." });
     }
 
-    const resultado = await pool.query(
-      `SELECT id, nome, email, cpf, telefone 
-       FROM users 
-       WHERE tipo_usuario = 'cliente' 
-       AND nome ILIKE $1 
-       ORDER BY nome ASC`,
-      [`%${nome}%`]
-    );
+    // ✅ Busca com Prisma (ILIKE vira mode: 'insensitive')
+    const clientes = await prisma.users.findMany({
+        where: {
+            tipo_usuario: 'cliente',
+            nome: {
+                contains: nome,
+                mode: 'insensitive' // Ignora maiúsculas/minúsculas
+            }
+        },
+        orderBy: { nome: 'asc' },
+        select: { id: true, nome: true, email: true, cpf: true, telefone: true }
+    });
     
-    
-    return res.json(resultado.rows);
+    return res.json(clientes);
 
   } catch (err) {
     console.error(err);
@@ -210,75 +198,79 @@ router.get('/clientes/buscar', verificarToken, validate(searchClientSchema), asy
 // ======================================================
 router.get('/clientes/:id/documentos', verificarToken, validate(getClientDetailsSchema), async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
-  const { month, year } = req.query; // Captura os filtros da URL
+  const { month, year } = req.query;
 
   try {
-    const usuarioLogado = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
-    if (usuarioLogado.rows[0].tipo_usuario !== 'admin') {
+    if (!req.userId || !(await checkAdmin(req.userId))) {
       return res.status(403).json({ msg: "Acesso negado." });
     }
 
-    // Prepara os parâmetros da query
-    const params: any[] = [id];
-    let filterClause = "";
-
-    // Se tiver mês E ano, adiciona filtro na junção dos documentos
-    // Usamos $2 e $3 porque $1 já é o ID do usuário
+    // Configura filtro de data
+    let dateFilter = {};
     if (month && year) {
-        filterClause = `AND EXTRACT(MONTH FROM d.data_upload) = $2 AND EXTRACT(YEAR FROM d.data_upload) = $3`;
-        params.push(month, year);
+        const start = new Date(Number(year), Number(month) - 1, 1);
+        const end = new Date(Number(year), Number(month), 1);
+        dateFilter = {
+            data_upload: { gte: start, lt: end }
+        };
     }
 
-    const query = `
-      SELECT 
-        u.id, u.nome, u.email, u.cpf, u.telefone,
-        COALESCE(
-          json_agg(
-            json_build_object(
-              'id_doc', d.id,
-              'titulo', d.titulo,
-              'url', d.url_arquivo,
-              'tamanho_bytes', d.tamanho_bytes, 
-              'formato', d.formato,
-              'data_upload', d.data_upload,
-              'visualizado_em', d.visualizado_em
-            ) ORDER BY d.data_upload DESC
-          ) FILTER (WHERE d.id IS NOT NULL), 
-          '[]'
-        ) AS documentos
-      FROM users u
-      LEFT JOIN documents d ON u.id = d.user_id ${filterClause}
-      WHERE u.id = $1
-      GROUP BY u.id;
-    `;
+    // ✅ Query poderosa do Prisma: Busca usuário E seus documentos (JOIN)
+    const cliente = await prisma.users.findUnique({
+        where: { id: Number(id) },
+        select: {
+            id: true, nome: true, email: true, cpf: true, telefone: true,
+            documents: {
+                where: dateFilter,
+                orderBy: { data_upload: 'desc' },
+                select: {
+                    id: true, // Frontend espera 'id' ou 'id_doc'? Vamos mapear abaixo.
+                    titulo: true,
+                    url_arquivo: true,
+                    tamanho_bytes: true,
+                    formato: true,
+                    data_upload: true,
+                    visualizado_em: true
+                }
+            }
+        }
+    });
 
-    const resultado = await pool.query(query, params);
-
-    if (resultado.rowCount === 0) {
+    if (!cliente) {
       return res.status(404).json({ msg: "Cliente não encontrado." });
     }
+
+    // Ajuste fino para manter compatibilidade com o Frontend (mapear 'id' para 'id_doc' se necessário)
+    // O frontend que fizemos usa `doc.id || doc.id_doc`, então o `id` nativo do Prisma funciona.
+    const resposta = {
+        ...cliente,
+        documentos: cliente.documents.map((d: any) => ({
+            ...d,
+            id_doc: d.id, // Mantendo compatibilidade legada
+            url: d.url_arquivo // Mantendo compatibilidade legada
+        }))
+    };
     
-    return res.json(resultado.rows[0]);
+    return res.json(serializeBigInt(resposta));
 
   } catch (err) {
     console.error(err);
     return res.status(500).json({ msg: "Erro ao carregar detalhes." });
   }
 });
+
 // ======================================================
-// 6. CONFIRMAÇÃO DE LEITURA (Novo)
+// 6. CONFIRMAÇÃO DE LEITURA
 // ======================================================
 router.patch('/documents/:id/visualizar', verificarToken, async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   
   try {
+    if (!req.userId) return res.status(401).json({ msg: "Erro auth" });
 
-    await pool.query(
-        `UPDATE documents 
-         SET visualizado_em = NOW() 
-         WHERE id = $1 AND user_id = $2`, 
-        [id, req.userId]
-    );
+    // ✅ Usa o repositório
+    await DocumentRepository.markAsViewed(Number(id), req.userId);
+    
     return res.json({ ok: true });
   } catch (err) {
     console.error("Erro ao marcar visualização:", err);
@@ -291,49 +283,59 @@ router.patch('/documents/:id/visualizar', verificarToken, async (req: AuthReques
 // ======================================================
 router.get('/dashboard/resumo', verificarToken, async (req: AuthRequest, res: Response) => {
   try {
-    // 1. Segurança: Só Admin
-    const usuario = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
-    if (usuario.rows[0].tipo_usuario !== 'admin') {
-      return res.status(403).json({ msg: "Acesso negado." });
+    if (!req.userId || !(await checkAdmin(req.userId))) {
+        return res.status(403).json({ msg: "Acesso negado." });
     }
 
-    // 2. Total de Clientes Ativos
-    const totalClientes = await pool.query("SELECT COUNT(*) FROM users WHERE tipo_usuario = 'cliente'");
+    const hoje = new Date();
+    const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+    const inicioProxMes = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 1);
 
-    // 3. Documentos Enviados este Mês
-    const docsMes = await pool.query(`
-      SELECT COUNT(*) FROM documents 
-      WHERE EXTRACT(MONTH FROM data_upload) = EXTRACT(MONTH FROM CURRENT_DATE)
-      AND EXTRACT(YEAR FROM data_upload) = EXTRACT(YEAR FROM CURRENT_DATE)
-    `);
+    // ✅ Executa queries em paralelo para ser mais rápido
+    const [clientesAtivos, uploadsMes, totalDocs, docsVisualizados, pendencias] = await Promise.all([
+        // 1. Total Clientes
+        prisma.users.count({ where: { tipo_usuario: 'cliente' } }),
+        
+        // 2. Uploads Mês
+        prisma.documents.count({
+            where: {
+                data_upload: { gte: inicioMes, lt: inicioProxMes }
+            }
+        }),
 
-    // 4. Taxa de Leitura Global (Quantos % foram vistos?)
-    const leituraStats = await pool.query(`
-      SELECT 
-        COUNT(*) as total,
-        COUNT(visualizado_em) as visualizados
-      FROM documents
-    `);
-    
-    const totalDocs = parseInt(leituraStats.rows[0].total) || 0;
-    const visualizados = parseInt(leituraStats.rows[0].visualizados) || 0;
-    const taxaLeitura = totalDocs === 0 ? 0 : Math.round((visualizados / totalDocs) * 100);
+        // 3. Stats Leitura (Total)
+        prisma.documents.count(),
 
-    // 5. Últimos 5 Documentos NÃO LIDOS (Pendências)
-    const pendencias = await pool.query(`
-      SELECT d.id, d.titulo, d.data_upload, u.nome as cliente_nome
-      FROM documents d
-      JOIN users u ON d.user_id = u.id
-      WHERE d.visualizado_em IS NULL
-      ORDER BY d.data_upload DESC
-      LIMIT 5
-    `);
+        // 4. Stats Leitura (Vistos)
+        prisma.documents.count({ where: { visualizado_em: { not: null } } }),
+
+        // 5. Pendências (Últimos 5 não lidos)
+        prisma.documents.findMany({
+            where: { visualizado_em: null },
+            orderBy: { data_upload: 'desc' },
+            take: 5,
+            select: {
+                id: true, titulo: true, data_upload: true,
+                users: { select: { nome: true } } // JOIN com usuario para pegar nome
+            }
+        })
+    ]);
+
+    const taxaLeitura = totalDocs === 0 ? 0 : Math.round((docsVisualizados / totalDocs) * 100);
+
+    // Formatar pendências para o formato que o front espera (flatten)
+    const pendenciasFormatadas = pendencias.map((p: any )=> ({
+        id: p.id,
+        titulo: p.titulo,
+        data_upload: p.data_upload,
+        cliente_nome: p.users?.nome || "Desconhecido"
+    }));
 
     return res.json({
-      clientesAtivos: totalClientes.rows[0].count,
-      uploadsMes: docsMes.rows[0].count,
-      taxaLeitura: taxaLeitura,
-      pendencias: pendencias.rows
+      clientesAtivos,
+      uploadsMes,
+      taxaLeitura,
+      pendencias: pendenciasFormatadas
     });
 
   } catch (err) {

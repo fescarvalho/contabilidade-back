@@ -8,9 +8,12 @@ import authRoutes from './routes/auth.routes';
 import docsRoutes from './routes/docs.routes';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-
+(BigInt.prototype as any).toJSON = function () {
+  return Number(this);
+};
 const app = express();
 app.use(helmet());
+
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
   max: 100, // Limite de 100 requisições por IP
@@ -19,7 +22,9 @@ const limiter = rateLimit({
   message: "Muitas tentativas de acesso vindas deste IP, tente novamente em 15 minutos."
 });
 app.set('trust proxy', 1);
+
 app.use(limiter);
+
 const allowedOrigins = [
   'https://leandro-abreu-contabilidade.vercel.app', 
   'http://localhost:5173' // Para você testar localmente
