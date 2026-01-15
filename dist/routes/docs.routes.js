@@ -162,14 +162,24 @@ router.get('/clientes/buscar', auth_1.verificarToken, (0, validateResource_1.val
     }
 });
 // ======================================================
-// 5. DETALHES DE UM CLIENTE + DOCUMENTOS
+// 5. DETALHES DE UM CLIENTE + DOCUMENTOS (COM FILTRO)
 // ======================================================
 router.get('/clientes/:id/documentos', auth_1.verificarToken, (0, validateResource_1.validate)(docSchemas_1.getClientDetailsSchema), async (req, res) => {
     const { id } = req.params;
+    const { month, year } = req.query; // Captura os filtros da URL
     try {
         const usuarioLogado = await db_1.pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
         if (usuarioLogado.rows[0].tipo_usuario !== 'admin') {
             return res.status(403).json({ msg: "Acesso negado." });
+        }
+        // Prepara os parâmetros da query
+        const params = [id];
+        let filterClause = "";
+        // Se tiver mês E ano, adiciona filtro na junção dos documentos
+        // Usamos $2 e $3 porque $1 já é o ID do usuário
+        if (month && year) {
+            filterClause = `AND EXTRACT(MONTH FROM d.data_upload) = $2 AND EXTRACT(YEAR FROM d.data_upload) = $3`;
+            params.push(month, year);
         }
         const query = `
       SELECT 
@@ -189,11 +199,11 @@ router.get('/clientes/:id/documentos', auth_1.verificarToken, (0, validateResour
           '[]'
         ) AS documentos
       FROM users u
-      LEFT JOIN documents d ON u.id = d.user_id
+      LEFT JOIN documents d ON u.id = d.user_id ${filterClause}
       WHERE u.id = $1
       GROUP BY u.id;
     `;
-        const resultado = await db_1.pool.query(query, [id]);
+        const resultado = await db_1.pool.query(query, params);
         if (resultado.rowCount === 0) {
             return res.status(404).json({ msg: "Cliente não encontrado." });
         }
