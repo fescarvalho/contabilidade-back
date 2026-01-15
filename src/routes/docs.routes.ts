@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import multer from 'multer';
 import { put, del } from '@vercel/blob';
 import { pool } from '../db';
+import { enviarEmailNovoDocumento } from '../services/emailService';
 import { verificarToken, AuthRequest } from '../middlewares/auth';
 
 // --- NOVOS IMPORTS ---
@@ -83,11 +84,17 @@ router.post(
         [cliente_id, titulo, blob.url, file.originalname, file.size, file.mimetype]
     );
 
+    const dadosCliente = checkCliente.rows[0];
+    enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo)
+      .then(() => console.log("Aviso enviado!"))
+      .catch(err => console.error("Falha no aviso:", err));
+
     return res.json({ 
         msg: `Arquivo enviado para ${checkCliente.rows[0].nome} com sucesso!`, 
         documento: novoDoc.rows[0] 
     });
-
+    
+  
   } catch (err) {
     console.error(err);
     if ((err as any).code === '22P02') {
