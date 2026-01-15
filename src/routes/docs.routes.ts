@@ -1,13 +1,25 @@
 import { Router, Response } from 'express';
 import multer from 'multer';
 import { put, del } from '@vercel/blob';
+import { pool } from '../db';
 import { verificarToken, AuthRequest } from '../middlewares/auth';
-import { pool } from '../db'; // <--- IMPORTAMOS AQUI
+
+// --- NOVOS IMPORTS ---
+import { validate } from '../middlewares/validateResource';
+import { 
+  uploadSchema, 
+  deleteDocumentSchema, 
+  searchClientSchema, 
+  getClientDetailsSchema 
+} from '../schemas/docSchemas';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// LISTAR (GET)
+// ======================================================
+// 1. LISTAR MEUS DOCUMENTOS (Cliente Logado)
+// ======================================================
+// Não precisa de Zod aqui pois só usa o token
 router.get('/meus-documentos', verificarToken, async (req: AuthRequest, res: Response) => {
   try {
     const resultado = await pool.query(
@@ -21,33 +33,41 @@ router.get('/meus-documentos', verificarToken, async (req: AuthRequest, res: Res
   }
 });
 
-// UPLOAD (POST)
-router.post('/upload', verificarToken, upload.single('arquivo'), async (req: AuthRequest, res: Response) => {
+// ======================================================
+// 2. UPLOAD (POST) - Com Zod e Multer
+// ======================================================
+// ORDEM IMPORTANTE: 1. Token -> 2. Multer (Lê o arquivo) -> 3. Zod (Valida os textos)
+router.post(
+  '/upload', 
+  verificarToken, 
+  upload.single('arquivo'), 
+  validate(uploadSchema), 
+  async (req: AuthRequest, res: Response) => {
+  
   try {
-    // 1. Validação: Só Admin pode entrar aqui
+    // 1. Validação: Só Admin pode enviar
     const usuarioLogado = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
     if (usuarioLogado.rows[0].tipo_usuario !== 'admin') {
         return res.status(403).json({ msg: "Acesso negado. Apenas admins." });
     }
 
-    // 2. AQUI ELE VOLTOU! Pegamos o ID do cliente alvo pelo formulário <<<
+    // O Zod já garantiu que cliente_id e titulo existem!
     const { cliente_id, titulo } = req.body; 
     const file = req.file;
 
-    // 3. Validamos se você não esqueceu de mandar o ID <<<
-    if (!cliente_id) return res.status(400).json({ msg: "Faltou informar o ID do cliente!" });
-    if (!file) return res.status(400).json({ msg: "Arquivo obrigatório." });
+    // O Zod não valida o arquivo binário (req.file), então validamos manualmente aqui
+    if (!file) return res.status(400).json({ msg: "Selecione um arquivo para enviar." });
 
+    // Verifica se o cliente existe
     const checkCliente = await pool.query('SELECT id, nome FROM users WHERE id = $1', [cliente_id]);
 
     if (checkCliente.rowCount === 0) {
         return res.status(404).json({ 
-            msg: `Erro: O cliente com ID ${cliente_id} não existe no sistema.` 
+            msg: `Erro: O cliente com ID ${cliente_id} não existe.` 
         });
     }
-    
 
-    // Se chegou aqui, o cliente existe! Pode fazer o upload.
+    // Upload para a Vercel Blob
     const blob = await put(file.originalname, file.buffer, { 
         access: 'public',
         token: process.env.BLOB_READ_WRITE_TOKEN,
@@ -70,7 +90,6 @@ router.post('/upload', verificarToken, upload.single('arquivo'), async (req: Aut
 
   } catch (err) {
     console.error(err);
-    // Se o erro for de formato inválido do ID (ex: texto em vez de numero)
     if ((err as any).code === '22P02') {
         return res.status(400).json({ msg: "O ID do cliente precisa ser um número." });
     }
@@ -78,19 +97,19 @@ router.post('/upload', verificarToken, upload.single('arquivo'), async (req: Aut
   }
 });
 
-// ROTA DE DELETAR DOCUMENTO (Somente Admin)
-router.delete('/documentos/:id', verificarToken, async (req: AuthRequest, res: Response) => {
-  const { id } = req.params; // Pega o ID da URL (ex: /documentos/15)
+// ======================================================
+// 3. DELETAR DOCUMENTO (Somente Admin)
+// ======================================================
+router.delete('/documentos/:id', verificarToken, validate(deleteDocumentSchema), async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
 
   try {
-    // 1. BARREIRA DE SEGURANÇA (Só Admin passa)
     const usuarioLogado = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
     
     if (usuarioLogado.rows[0].tipo_usuario !== 'admin') {
-      return res.status(403).json({ msg: "Acesso negado. Apenas administradores podem deletar arquivos." });
+      return res.status(403).json({ msg: "Acesso negado." });
     }
 
-    // 2. BUSCAR O ARQUIVO NO BANCO (Para pegar a URL)
     const documento = await pool.query('SELECT * FROM documents WHERE id = $1', [id]);
     
     if (documento.rowCount === 0) {
@@ -99,18 +118,20 @@ router.delete('/documentos/:id', verificarToken, async (req: AuthRequest, res: R
 
     const arquivoParaDeletar = documento.rows[0];
 
-    // 3. APAGAR O ARQUIVO FÍSICO NA VERCEL (Importante para economizar espaço!)
-    // A função 'del' precisa da URL completa do arquivo
+    // Apagar da Vercel
     if (arquivoParaDeletar.url_arquivo) {
-        await del(arquivoParaDeletar.url_arquivo, {
-            token: process.env.BLOB_READ_WRITE_TOKEN
-        });
+        try {
+            await del(arquivoParaDeletar.url_arquivo, {
+                token: process.env.BLOB_READ_WRITE_TOKEN
+            });
+        } catch (error) {
+            console.error("Erro ao apagar do Blob (pode já ter sido apagado):", error);
+        }
     }
 
-    // 4. APAGAR O REGISTRO DO BANCO DE DADOS
     await pool.query('DELETE FROM documents WHERE id = $1', [id]);
 
-    return res.json({ msg: "Documento apagado com sucesso do sistema e da nuvem." });
+    return res.json({ msg: "Documento apagado com sucesso." });
 
   } catch (err) {
     console.error(err);
@@ -118,36 +139,29 @@ router.delete('/documentos/:id', verificarToken, async (req: AuthRequest, res: R
   }
 });
 
-// BUSCAR CLIENTE PELO NOME (Busca Parcial)
-router.get('/clientes/buscar', verificarToken, async (req: AuthRequest, res: Response) => {
-  // Pega o nome da URL: /clientes/buscar?nome=joao
-  const nome = (req.query.nome as string)?.trim();
+// ======================================================
+// 4. BUSCAR CLIENTE (Busca Parcial)
+// ======================================================
+router.get('/clientes/buscar', verificarToken, validate(searchClientSchema), async (req: AuthRequest, res: Response) => {
+  const nome = (req.query.nome as string).trim();
 
   try {
-    // 1. Segurança: Apenas Admin pode buscar
     const usuarioLogado = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
     if (usuarioLogado.rows[0].tipo_usuario !== 'admin') {
       return res.status(403).json({ msg: "Acesso negado." });
     }
 
-    if (!nome) {
-        return res.status(400).json({ msg: "Por favor, digite um nome para pesquisar." });
-    }
-
-    // 2. BUSCA INTELIGENTE (ILIKE)
-    // O operador ILIKE faz a busca ignorando maiúsculas/minúsculas.
-    // Os símbolos % significam "qualquer coisa antes ou depois".
     const resultado = await pool.query(
       `SELECT id, nome, email, cpf, telefone 
        FROM users 
        WHERE tipo_usuario = 'cliente' 
        AND nome ILIKE $1 
        ORDER BY nome ASC`,
-      [`%${nome}%`] // Ex: Se digitar "silva", busca por "%silva%"
+      [`%${nome}%`]
     );
     
     if (resultado.rows.length === 0) {
-        return res.status(404).json({ msg: "Nenhum cliente encontrado com esse nome." });
+        return res.status(404).json({ msg: "Nenhum cliente encontrado." });
     }
 
     return res.json(resultado.rows);
@@ -158,33 +172,28 @@ router.get('/clientes/buscar', verificarToken, async (req: AuthRequest, res: Res
   }
 });
 
-
-// LISTAR DADOS E DOCUMENTOS DE UM ÚNICO CLIENTE (Detalhes)
-router.get('/clientes/:id/documentos', verificarToken, async (req: AuthRequest, res: Response) => {
-  const { id } = req.params; // Pega o ID da URL (ex: /clientes/5/documentos)
+// ======================================================
+// 5. DETALHES DE UM CLIENTE + DOCUMENTOS
+// ======================================================
+router.get('/clientes/:id/documentos', verificarToken, validate(getClientDetailsSchema), async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
 
   try {
-    // 1. Segurança: Apenas Admin pode ver detalhes de outros
-    // (Opcional: Se quiser que o próprio cliente veja os seus, teria que mudar a lógica aqui)
     const usuarioLogado = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
     if (usuarioLogado.rows[0].tipo_usuario !== 'admin') {
       return res.status(403).json({ msg: "Acesso negado." });
     }
 
-    // 2. QUERY FILTRADA POR ID
     const query = `
       SELECT 
-        u.id, 
-        u.nome, 
-        u.email, 
-        u.cpf,
-        u.telefone,
+        u.id, u.nome, u.email, u.cpf, u.telefone,
         COALESCE(
           json_agg(
             json_build_object(
               'id_doc', d.id,
               'titulo', d.titulo,
-              'url', d.url_arquivo
+              'url', d.url_arquivo,
+              'data_upload', d.data_upload
             ) 
           ) FILTER (WHERE d.id IS NOT NULL), 
           '[]'
@@ -197,17 +206,16 @@ router.get('/clientes/:id/documentos', verificarToken, async (req: AuthRequest, 
 
     const resultado = await pool.query(query, [id]);
 
-    // 3. Validação se o cliente existe
     if (resultado.rowCount === 0) {
       return res.status(404).json({ msg: "Cliente não encontrado." });
     }
     
-    // Retorna o primeiro (e único) item do array
     return res.json(resultado.rows[0]);
 
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ msg: "Erro ao carregar detalhes do cliente." });
+    return res.status(500).json({ msg: "Erro ao carregar detalhes." });
   }
 });
+
 export default router;

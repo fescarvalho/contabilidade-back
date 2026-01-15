@@ -2,37 +2,36 @@ import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { pool } from "../db";
-// import { v4 as uuidv4 } from 'uuid'; // REMOVIDO: Não vamos usar uuid
 import { del } from "@vercel/blob";
 import { verificarToken, AuthRequest } from "../middlewares/auth";
 import { enviarEmailRecuperacao } from '../services/emailService';
 
+// --- NOVO: IMPORTAÇÕES DO ZOD ---
+import { validate } from "../middlewares/validateResource";
+import { 
+  registerSchema, 
+  loginSchema, 
+  forgotPasswordSchema, 
+  resetPasswordSchema 
+} from "../schemas/authSchemas";
+
 const router = Router();
 
-// REMOVIDO: const resetTokens = new Map(); // Causava erro na Vercel
-
 // Chave secreta para assinar o token de recuperação
-// (Em produção, garanta que process.env.JWT_SECRET esteja definido)
 const JWT_SECRET = process.env.JWT_SECRET || "sua_chave_super_secreta_recuperacao";
 
 // ======================================================
-// 1. REGISTRO
+// 1. REGISTRO (Agora protegido pelo Zod)
 // ======================================================
-router.post("/register", async (req: Request, res: Response) => {
+// Note o uso de 'validate(registerSchema)' aqui na linha abaixo 👇
+router.post("/register", validate(registerSchema), async (req: Request, res: Response) => {
   const { nome, email, senha, cpf, telefone } = req.body;
 
   try {
-    if (
-      !nome?.trim() ||
-      !email?.trim() ||
-      !senha?.trim() ||
-      !cpf?.trim() ||
-      !telefone?.trim()
-    ) {
-      return res.status(400).json({
-        msg: "Todos os campos (nome, email, senha, cpf, telefone) são obrigatórios.",
-      });
-    }
+    // --- NÃO PRECISA MAIS DOS IFs MANUAIS AQUI! ---
+    // O Zod já garantiu que nome, email, senha, cpf e telefone existem e são válidos.
+
+    // Só precisamos checar se já existe no banco (regra de negócio)
     const userExist = await pool.query(
       "SELECT email, cpf FROM users WHERE email = $1 OR cpf = $2",
       [email, cpf],
@@ -42,9 +41,7 @@ router.post("/register", async (req: Request, res: Response) => {
       const encontrado = userExist.rows[0];
 
       if (encontrado.email === email) {
-        return res
-          .status(400)
-          .json({ msg: "Este e-mail já está em uso por outra conta." });
+        return res.status(400).json({ msg: "Este e-mail já está em uso por outra conta." });
       }
 
       if (encontrado.cpf === cpf) {
@@ -52,14 +49,9 @@ router.post("/register", async (req: Request, res: Response) => {
       }
     }
 
-    const senhaForteRegex = /^(?=.*\d)(?=.*[\W_]).{6,}$/;
+    // A validação de senha forte (Regex) também já foi feita pelo Zod!
 
-    if (!senhaForteRegex.test(senha)) {
-      return res.status(400).json({
-        msg: "A senha é muito fraca. Ela deve ter no mínimo 6 caracteres, 1 número e 1 símbolo.",
-      });
-    }
-
+    // --- Cria o Hash e Salva ---
     const salt = await bcrypt.genSalt(10);
     const senhaHash = await bcrypt.hash(senha, salt);
 
@@ -77,9 +69,9 @@ router.post("/register", async (req: Request, res: Response) => {
 });
 
 // ======================================================
-// 2. LOGIN
+// 2. LOGIN (Agora protegido pelo Zod)
 // ======================================================
-router.post("/login", async (req: Request, res: Response) => {
+router.post("/login", validate(loginSchema), async (req: Request, res: Response) => {
   const { email, senha } = req.body;
 
   try {
@@ -89,7 +81,6 @@ router.post("/login", async (req: Request, res: Response) => {
     if (!user) {
       return res.status(400).json({ msg: "E-mail ou senha incorretos." });
     }
-    // console.log("📦 O QUE VEIO DO BANCO:", user);
   
     const senhaBate = await bcrypt.compare(senha, user.senha_hash);
 
@@ -239,9 +230,9 @@ router.put("/users/:id", verificarToken, async (req: AuthRequest, res: Response)
 });
 
 // ======================================================
-// ✅ ROTA 6: Esqueci a Senha (CORRIGIDO PARA VERCEL)
+// 6. ESQUECI A SENHA (Agora protegido pelo Zod)
 // ======================================================
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', validate(forgotPasswordSchema), async (req, res) => {
   const { email } = req.body;
 
   try {
@@ -252,11 +243,7 @@ router.post('/forgot-password', async (req, res) => {
       return res.status(404).json({ msg: "E-mail não encontrado." });
     }
 
-    // GERA TOKEN JWT (Stateless - Funciona na Vercel)
-    // O token guarda o email criptografado e expira em 1 hora
     const token = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: '1h' });
-
-    // Link para o Front
     const link = `https://leandro-abreu-contabilidade.vercel.app/redefinir-senha?token=${token}`;
 
     console.log(`Enviando para ${email}...`);
@@ -276,38 +263,32 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 // ======================================================
-// ✅ ROTA 7: Resetar a Senha (CORRIGIDO PARA VERCEL)
+// 7. RESETAR SENHA (Agora protegido pelo Zod)
 // ======================================================
-router.post('/reset-password', async (req, res) => {
-  console.log("1. Recebi o pedido de reset");
+router.post('/reset-password', validate(resetPasswordSchema), async (req, res) => {
   const { token, newPassword } = req.body;
 
   try {
-    // 1. Valida Token
-    console.log("2. Validando token...");
+    // 1. Valida Token e Pega Email
     const decoded: any = jwt.verify(token, JWT_SECRET);
     const email = decoded.email;
-    console.log("3. Token OK. Email:", email);
 
-    // 2. Criptografa Senha
-    console.log("4. Gerando Hash...");
+    // 2. Criptografa Nova Senha
     const salt = await bcrypt.genSalt(10);
     const hash = await bcrypt.hash(newPassword, salt);
-    console.log("5. Hash gerado.");
 
     // 3. Atualiza Banco
-    console.log("6. Atualizando Banco...");
     await pool.query(
         "UPDATE users SET senha_hash = $1 WHERE email = $2",
         [hash, email]
     );
-    console.log("7. Banco atualizado!");
     
     return res.json({ msg: "Senha alterada com sucesso!" });
 
   } catch (error) {
-    console.error("❌ ERRO NO RESET:", error); // <--- O erro vai aparecer aqui no Log da Vercel
-    return res.status(400).json({ msg: "Erro ao resetar senha (verifique logs)" });
+    console.error("❌ ERRO NO RESET:", error);
+    return res.status(400).json({ msg: "O link expirou ou é inválido. Peça um novo." });
   }
 });
+
 export default router;
