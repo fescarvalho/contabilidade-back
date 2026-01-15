@@ -286,4 +286,60 @@ router.patch('/documents/:id/visualizar', verificarToken, async (req: AuthReques
   }
 });
 
+// ======================================================
+// 7. DASHBOARD DE VISÃO GERAL (BI)
+// ======================================================
+router.get('/dashboard/resumo', verificarToken, async (req: AuthRequest, res: Response) => {
+  try {
+    // 1. Segurança: Só Admin
+    const usuario = await pool.query('SELECT tipo_usuario FROM users WHERE id = $1', [req.userId]);
+    if (usuario.rows[0].tipo_usuario !== 'admin') {
+      return res.status(403).json({ msg: "Acesso negado." });
+    }
+
+    // 2. Total de Clientes Ativos
+    const totalClientes = await pool.query("SELECT COUNT(*) FROM users WHERE tipo_usuario = 'cliente'");
+
+    // 3. Documentos Enviados este Mês
+    const docsMes = await pool.query(`
+      SELECT COUNT(*) FROM documents 
+      WHERE EXTRACT(MONTH FROM data_upload) = EXTRACT(MONTH FROM CURRENT_DATE)
+      AND EXTRACT(YEAR FROM data_upload) = EXTRACT(YEAR FROM CURRENT_DATE)
+    `);
+
+    // 4. Taxa de Leitura Global (Quantos % foram vistos?)
+    const leituraStats = await pool.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(visualizado_em) as visualizados
+      FROM documents
+    `);
+    
+    const totalDocs = parseInt(leituraStats.rows[0].total) || 0;
+    const visualizados = parseInt(leituraStats.rows[0].visualizados) || 0;
+    const taxaLeitura = totalDocs === 0 ? 0 : Math.round((visualizados / totalDocs) * 100);
+
+    // 5. Últimos 5 Documentos NÃO LIDOS (Pendências)
+    const pendencias = await pool.query(`
+      SELECT d.id, d.titulo, d.data_upload, u.nome as cliente_nome
+      FROM documents d
+      JOIN users u ON d.user_id = u.id
+      WHERE d.visualizado_em IS NULL
+      ORDER BY d.data_upload DESC
+      LIMIT 5
+    `);
+
+    return res.json({
+      clientesAtivos: totalClientes.rows[0].count,
+      uploadsMes: docsMes.rows[0].count,
+      taxaLeitura: taxaLeitura,
+      pendencias: pendencias.rows
+    });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ msg: "Erro ao carregar dashboard." });
+  }
+});
+
 export default router;
