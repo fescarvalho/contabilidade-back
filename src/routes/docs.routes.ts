@@ -85,7 +85,7 @@ router.post(
     );
 
     const dadosCliente = checkCliente.rows[0];
-    enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo)
+    await enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo)
       .then(() => console.log("Aviso enviado!"))
       .catch(err => console.error("Falha no aviso:", err));
 
@@ -93,7 +93,7 @@ router.post(
         msg: `Arquivo enviado para ${checkCliente.rows[0].nome} com sucesso!`, 
         documento: novoDoc.rows[0] 
     });
-    
+
   
   } catch (err) {
     console.error(err);

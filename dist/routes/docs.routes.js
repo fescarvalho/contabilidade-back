@@ -64,7 +64,7 @@ router.post('/upload', auth_1.verificarToken, upload.single('arquivo'), (0, vali
         VALUES ($1, $2, $3, $4, $5, $6) 
         RETURNING *`, [cliente_id, titulo, blob.url, file.originalname, file.size, file.mimetype]);
         const dadosCliente = checkCliente.rows[0];
-        (0, emailService_1.enviarEmailNovoDocumento)(dadosCliente.email, dadosCliente.nome, titulo)
+        await (0, emailService_1.enviarEmailNovoDocumento)(dadosCliente.email, dadosCliente.nome, titulo)
             .then(() => console.log("Aviso enviado!"))
             .catch(err => console.error("Falha no aviso:", err));
         return res.json({
