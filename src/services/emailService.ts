@@ -13,12 +13,12 @@ const transporter = nodemailer.createTransport({
 
 const REMETENTE_OFICIAL = `"Leandro Abreu Contabilidade" <${process.env.GOOGLE_EMAIL}>`;
 
-// --- TEMPLATE DE EMAIL MODERNO (HTML/CSS INLINE) ---
-// Essa função gera o HTML bonito para qualquer tipo de aviso
+// --- TEMPLATE DE EMAIL MODERNO ---
 const gerarHtmlTemplate = (titulo: string, corpo: string, link: string, textoBotao: string) => {
   
-  // ✅ Link direto da sua logo
-  const urlImagemRodape = "https://drive.google.com/uc?export=view&id=1ZB6szeWOo4oVGgWGheCQAw30vynuXK3y";
+  // Logos configuradas (Links diretos do Drive)
+  const urlImagemLogo = "https://drive.google.com/uc?export=view&id=1u9NUb3D7Dq7zSOfUZgmr2mwrzlBBJ6W0";
+  const urlImagemRodape = "https://drive.google.com/uc?export=view&id=1ZB6szeWOo4oVGgWGheCQAw30vynuXK3y"; 
 
   return `
     <!DOCTYPE html>
@@ -37,13 +37,22 @@ const gerarHtmlTemplate = (titulo: string, corpo: string, link: string, textoBot
             <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
               
               <tr>
-                <td bgcolor="#111111" style="padding: 30px; text-align: center;">
-                  <h1 style="color: #C5A059; margin: 0; font-size: 24px; font-weight: 300; letter-spacing: 1px; font-family: serif;">
-                    LEANDRO ABREU
-                  </h1>
-                  <p style="color: #666; margin: 5px 0 0 0; font-size: 10px; text-transform: uppercase; letter-spacing: 2px;">
-                    CONTABILIDADE
-                  </p>
+                <td bgcolor="#111111" style="padding: 25px 20px; text-align: center;">
+                  <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="display: inline-block; vertical-align: middle;">
+                    <tr>
+                      <td style="padding-right: 15px; vertical-align: middle;">
+                        <img src="${urlImagemLogo}" alt="Logo" width="55" height="55" style="display: block; border: 0; object-fit: contain;">
+                      </td>
+                      <td style="vertical-align: middle; text-align: left; border-left: 1px solid #333; padding-left: 15px;">
+                        <h1 style="color: #C5A059; margin: 0; font-size: 20px; font-weight: 300; letter-spacing: 1px; font-family: serif; line-height: 1.2;">
+                          LEANDRO ABREU
+                        </h1>
+                        <p style="color: #888; margin: 2px 0 0 0; font-size: 9px; text-transform: uppercase; letter-spacing: 3px;">
+                          CONTABILIDADE
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
                 </td>
               </tr>
 
@@ -66,9 +75,7 @@ const gerarHtmlTemplate = (titulo: string, corpo: string, link: string, textoBot
 
               <tr>
                 <td bgcolor="#f9f9f9" style="padding: 30px 20px; text-align: center; border-top: 1px solid #eeeeee;">
-                  
-                  <img src="${urlImagemRodape}" alt="Leandro Abreu Contabilidade" width="200" style="display: block; margin: 0 auto 20px auto; border: 0; max-width: 100%; height: auto;">
-
+                  <img src="${urlImagemRodape}" alt="Leandro Abreu Contabilidade" width="150" style="display: block; margin: 0 auto 20px auto; border: 0; max-width: 100%; height: auto; opacity: 0.8;">
                   <p style="margin: 0; font-size: 12px; color: #999999; line-height: 1.5;">
                     &copy; ${new Date().getFullYear()} Leandro Abreu Contabilidade.<br>
                     Rua Dr. Raul Travassos, nº 03, Loja 02 - Natividade/RJ<br>
@@ -123,7 +130,8 @@ export const enviarEmailRecuperacao = async (destinatario: string, link: string)
 export const enviarEmailNovoDocumento = async (emailDestino: string, nomeCliente: string, tituloDoc: string) => {
   console.log(`📨 Enviando aviso de documento para: ${emailDestino}`);
   
-  const linkPlataforma = "https://leandro-abreu-contabilidade.vercel.app/usuario"; 
+  // ✅ ATUALIZADO: Agora aponta direto para a tela de LOGIN
+  const linkPlataforma = "https://leandro-abreu-contabilidade.vercel.app/login"; 
 
   const corpoMensagem = `
     <h2 style="color: #333; font-size: 20px; margin-top: 0;">Olá, ${nomeCliente}!</h2>
