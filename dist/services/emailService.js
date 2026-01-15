@@ -19,6 +19,8 @@ const REMETENTE_OFICIAL = `"Leandro Abreu Contabilidade" <${process.env.GOOGLE_E
 // --- TEMPLATE DE EMAIL MODERNO (HTML/CSS INLINE) ---
 // Essa função gera o HTML bonito para qualquer tipo de aviso
 const gerarHtmlTemplate = (titulo, corpo, link, textoBotao) => {
+    // ✅ Link direto da sua logo
+    const urlImagemRodape = "https://i.imgur.com/17XRFP8.png";
     return `
     <!DOCTYPE html>
     <html>
@@ -64,9 +66,14 @@ const gerarHtmlTemplate = (titulo, corpo, link, textoBotao) => {
               </tr>
 
               <tr>
-                <td bgcolor="#f9f9f9" style="padding: 20px; text-align: center; border-top: 1px solid #eeeeee;">
-                  <p style="margin: 0; font-size: 12px; color: #999999;">
+                <td bgcolor="#f9f9f9" style="padding: 30px 20px; text-align: center; border-top: 1px solid #eeeeee;">
+                  
+                  <img src="${urlImagemRodape}" alt="Leandro Abreu Contabilidade" width="200" style="display: block; margin: 0 auto 20px auto; border: 0; max-width: 100%; height: auto;">
+
+                  <p style="margin: 0; font-size: 12px; color: #999999; line-height: 1.5;">
                     &copy; ${new Date().getFullYear()} Leandro Abreu Contabilidade.<br>
+                    Rua Dr. Raul Travassos, nº 03, Loja 02 - Natividade/RJ<br>
+                    CNPJ: 34.117.554/0001-95<br>
                     Esta é uma mensagem automática, por favor não responda.
                   </p>
                 </td>
