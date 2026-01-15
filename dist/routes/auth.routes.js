@@ -10,6 +10,7 @@ const db_1 = require("../db");
 const blob_1 = require("@vercel/blob");
 const auth_1 = require("../middlewares/auth");
 const emailService_1 = require("../services/emailService");
+const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 // --- NOVO: IMPORTAÇÕES DO ZOD ---
 const validateResource_1 = require("../middlewares/validateResource");
 const authSchemas_1 = require("../schemas/authSchemas");
@@ -64,6 +65,11 @@ router.post("/login", (0, validateResource_1.validate)(authSchemas_1.loginSchema
         if (!senhaBate) {
             return res.status(400).json({ msg: "E-mail ou senha incorretos." });
         }
+        const loginLimiter = (0, express_rate_limit_1.default)({
+            windowMs: 15 * 60 * 1000, // 15 minutos
+            max: 5, // Só permite 5 tentativas erradas por IP
+            message: "Muitas tentativas de login. Conta bloqueada temporariamente por 15 minutos."
+        });
         const secret = process.env.JWT_SECRET || "segredo_padrao_teste";
         const token = jsonwebtoken_1.default.sign({ id: user.id }, secret, { expiresIn: "1h" });
         return res.json({

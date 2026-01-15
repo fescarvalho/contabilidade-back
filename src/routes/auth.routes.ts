@@ -5,7 +5,7 @@ import { pool } from "../db";
 import { del } from "@vercel/blob";
 import { verificarToken, AuthRequest } from "../middlewares/auth";
 import { enviarEmailRecuperacao } from '../services/emailService';
-
+import rateLimit from 'express-rate-limit';
 // --- NOVO: IMPORTAÇÕES DO ZOD ---
 import { validate } from "../middlewares/validateResource";
 import { 
@@ -87,7 +87,11 @@ router.post("/login", validate(loginSchema), async (req: Request, res: Response)
     if (!senhaBate) {
       return res.status(400).json({ msg: "E-mail ou senha incorretos." });
     }
-
+    const loginLimiter = rateLimit({
+      windowMs: 15 * 60 * 1000, // 15 minutos
+      max: 5, // Só permite 5 tentativas erradas por IP
+      message: "Muitas tentativas de login. Conta bloqueada temporariamente por 15 minutos."
+  });
     const secret = process.env.JWT_SECRET || "segredo_padrao_teste";
     const token = jwt.sign({ id: user.id }, secret, { expiresIn: "1h" });
 
