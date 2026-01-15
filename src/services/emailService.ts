@@ -18,7 +18,7 @@ const REMETENTE_OFICIAL = `"Leandro Abreu Contabilidade" <${process.env.GOOGLE_E
 const gerarHtmlTemplate = (titulo: string, corpo: string, link: string, textoBotao: string) => {
   
   // ✅ Link direto da sua logo
-  const urlImagemRodape = "https://i.imgur.com/17XRFP8.png"; 
+  const urlImagemRodape = "https://drive.google.com/uc?export=view&id=1ZB6szeWOo4oVGgWGheCQAw30vynuXK3y";
 
   return `
     <!DOCTYPE html>
