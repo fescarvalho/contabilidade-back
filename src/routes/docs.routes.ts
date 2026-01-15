@@ -20,15 +20,32 @@ const upload = multer({ storage: multer.memoryStorage() });
 // ======================================================
 // 1. LISTAR MEUS DOCUMENTOS (Cliente Logado)
 // ======================================================
+// ======================================================
+// 1. LISTAR MEUS DOCUMENTOS (COM FILTRO DE DATA)
+// ======================================================
 router.get('/meus-documentos', verificarToken, async (req: AuthRequest, res: Response) => {
   try {
-    // ✅ ATUALIZAÇÃO: Incluído 'visualizado_em' para o cliente saber se já viu
-    const resultado = await pool.query(
-      `SELECT id, user_id, titulo, url_arquivo, nome_original, tamanho_bytes, formato, data_upload, visualizado_em 
-       FROM documents WHERE user_id = $1 ORDER BY data_upload DESC`,
-      [req.userId]
-    );
+    const { month, year } = req.query; // Pega da URL: ?month=01&year=2026
+
+    let query = `
+      SELECT id, user_id, titulo, url_arquivo, nome_original, tamanho_bytes, formato, data_upload, visualizado_em 
+      FROM documents 
+      WHERE user_id = $1
+    `;
+    const params: any[] = [req.userId];
+
+    // Se tiver mês E ano, aplica o filtro
+    if (month && year) {
+        // $2 e $3 serão o mês e o ano
+        query += ` AND EXTRACT(MONTH FROM data_upload) = $2 AND EXTRACT(YEAR FROM data_upload) = $3`;
+        params.push(month, year);
+    }
+
+    query += ` ORDER BY data_upload DESC`;
+
+    const resultado = await pool.query(query, params);
     return res.json(resultado.rows);
+
   } catch (err) {
     console.error(err);
     return res.status(500).json({ msg: "Erro ao buscar documentos" });
