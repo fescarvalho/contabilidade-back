@@ -14,7 +14,7 @@ app.use((req, res, next) => {
     // 1. Quem pode acessar (Seu Frontend)
     res.header("Access-Control-Allow-Origin", "https://leandro-abreu-contabilidade.vercel.app");
     // 2. Métodos permitidos
-    res.header("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Methods", "GET, PUT, POST, PATCH, DELETE, OPTIONS");
     // 3. Cabeçalhos permitidos
     res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
     // 4. A MÁGICA: Se for o "Preflight" (OPTIONS), responde 200 OK na hora e encerra!

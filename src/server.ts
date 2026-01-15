@@ -13,7 +13,7 @@ app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "https://leandro-abreu-contabilidade.vercel.app");
   
   // 2. Métodos permitidos
-  res.header("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Methods", "GET, PUT, POST, PATCH, DELETE, OPTIONS");
   
   // 3. Cabeçalhos permitidos
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
