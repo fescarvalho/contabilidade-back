@@ -35,21 +35,28 @@ const checkAdmin = async (userId: number) => {
 };
 
 // ======================================================
-// 1. LISTAR MEUS DOCUMENTOS (Cliente Logado)
+// 1. LISTAR MEUS DOCUMENTOS (Com Paginação)
 // ======================================================
 router.get('/meus-documentos', verificarToken, async (req: AuthRequest, res: Response) => {
   try {
     if (!req.userId) return res.status(401).json({ msg: "Usuário não identificado." });
 
     const { month, year } = req.query;
+    
+    // Pegamos a página e o limite da query (ou usamos padrão 1 e 10)
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 10;
 
-    const documentos = await DocumentRepository.findByUserId(
+    const resultado = await DocumentRepository.findByUserId(
         req.userId, 
         month as string | undefined, 
-        year as string | undefined
+        year as string | undefined,
+        page,
+        limit
     );
     
-    return res.json(serializeBigInt(documentos));
+    // Serializa o BigInt tanto nos dados quanto nos metadados (se houver)
+    return res.json(serializeBigInt(resultado));
 
   } catch (err) {
     console.error(err);

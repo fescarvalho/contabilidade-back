@@ -3,31 +3,47 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.DocumentRepository = void 0;
 const prisma_1 = require("../lib/prisma");
 exports.DocumentRepository = {
-    // 1. Buscar documentos (com filtro opcional de Mês/Ano)
-    findByUserId: async (userId, month, year) => {
+    // ✅ Agora aceita 'page' e 'limit'
+    findByUserId: async (userId, month, year, page = 1, limit = 10) => {
         let dateFilter = {};
-        // Se tiver Mês e Ano, criamos um intervalo de datas (Do dia 1 até o último dia)
+        // Configura o filtro de data
         if (month && year) {
-            const start = new Date(Number(year), Number(month) - 1, 1); // Dia 1 do mês atual
-            const end = new Date(Number(year), Number(month), 1); // Dia 1 do mês seguinte
+            const start = new Date(Number(year), Number(month) - 1, 1);
+            const end = new Date(Number(year), Number(month), 1);
             dateFilter = {
                 data_upload: {
-                    gte: start, // Maior ou igual ao inicio
-                    lt: end, // Menor que o inicio do próximo mês
+                    gte: start,
+                    lt: end,
                 }
             };
         }
-        return await prisma_1.prisma.documents.findMany({
-            where: {
-                user_id: userId,
-                ...dateFilter // Aplica o filtro se existir
-            },
-            orderBy: {
-                data_upload: 'desc' // Ordena do mais recente para o antigo
+        const where = {
+            user_id: userId,
+            ...dateFilter
+        };
+        // 🚀 O Pulo do Gato: Prisma Transaction
+        // Fazemos duas consultas ao mesmo tempo: Contar o total E pegar os dados.
+        const [total, documents] = await prisma_1.prisma.$transaction([
+            prisma_1.prisma.documents.count({ where }), // 1. Conta quantos existem no total
+            prisma_1.prisma.documents.findMany({
+                where,
+                take: limit, // Pega X itens
+                skip: (page - 1) * limit, // Pula os anteriores
+                orderBy: {
+                    data_upload: 'desc'
+                }
+            })
+        ]);
+        return {
+            data: documents,
+            meta: {
+                total,
+                page,
+                lastPage: Math.ceil(total / limit),
+                limit
             }
-        });
+        };
     },
-    // 2. Criar novo documento
     create: async (data) => {
         return await prisma_1.prisma.documents.create({
             data: {
@@ -35,30 +51,22 @@ exports.DocumentRepository = {
                 titulo: data.titulo,
                 url_arquivo: data.url,
                 nome_original: data.nomeOriginal,
-                tamanho_bytes: data.tamanho, // O Prisma lida com BigInt automaticamente
+                tamanho_bytes: data.tamanho,
                 formato: data.formato
             }
         });
     },
-    // 3. Marcar como visualizado
     markAsViewed: async (docId, userId) => {
         await prisma_1.prisma.documents.updateMany({
-            where: {
-                id: docId,
-                user_id: userId // Segurança: garante que o doc é do usuário
-            },
-            data: {
-                visualizado_em: new Date()
-            }
+            where: { id: docId, user_id: userId },
+            data: { visualizado_em: new Date() }
         });
     },
-    // 4. Deletar documento
     delete: async (docId) => {
         return await prisma_1.prisma.documents.delete({
             where: { id: docId }
         });
     },
-    // 5. Buscar um documento pelo ID (útil para deletar)
     findById: async (docId) => {
         return await prisma_1.prisma.documents.findUnique({
             where: { id: docId }
