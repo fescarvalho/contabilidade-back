@@ -20,7 +20,7 @@ const REMETENTE_OFICIAL = `"Leandro Abreu Contabilidade" <${process.env.GOOGLE_E
 // Essa função gera o HTML bonito para qualquer tipo de aviso
 const gerarHtmlTemplate = (titulo, corpo, link, textoBotao) => {
     // ✅ Link direto da sua logo
-    const urlImagemRodape = "https://drive.google.com/file/d/1ZB6szeWOo4oVGgWGheCQAw30vynuXK3y/view?usp=sharing";
+    const urlImagemRodape = "https://i.imgur.com/17XRFP8.png";
     return `
     <!DOCTYPE html>
     <html>
