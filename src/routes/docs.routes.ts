@@ -5,7 +5,7 @@ import { pool } from '../db';
 import { enviarEmailNovoDocumento } from '../services/emailService';
 import { verificarToken, AuthRequest } from '../middlewares/auth';
 
-// --- NOVOS IMPORTS ---
+
 import { validate } from '../middlewares/validateResource';
 import { 
   uploadSchema, 
@@ -20,16 +20,17 @@ const upload = multer({ storage: multer.memoryStorage() });
 // ======================================================
 // 1. LISTAR MEUS DOCUMENTOS (Cliente Logado)
 // ======================================================
-// Não precisa de Zod aqui pois só usa o token
 router.get('/meus-documentos', verificarToken, async (req: AuthRequest, res: Response) => {
   try {
+    // ✅ ATUALIZAÇÃO: Incluído 'visualizado_em' para o cliente saber se já viu
     const resultado = await pool.query(
-      `SELECT id, user_id, titulo, url_arquivo, nome_original, tamanho_bytes, formato, data_upload 
+      `SELECT id, user_id, titulo, url_arquivo, nome_original, tamanho_bytes, formato, data_upload, visualizado_em 
        FROM documents WHERE user_id = $1 ORDER BY data_upload DESC`,
       [req.userId]
     );
     return res.json(resultado.rows);
   } catch (err) {
+    console.error(err);
     return res.status(500).json({ msg: "Erro ao buscar documentos" });
   }
 });
@@ -37,7 +38,6 @@ router.get('/meus-documentos', verificarToken, async (req: AuthRequest, res: Res
 // ======================================================
 // 2. UPLOAD (POST) - Com Zod e Multer
 // ======================================================
-// ORDEM IMPORTANTE: 1. Token -> 2. Multer (Lê o arquivo) -> 3. Zod (Valida os textos)
 router.post(
   '/upload', 
   verificarToken, 
@@ -57,7 +57,7 @@ router.post(
 
     if (!file) return res.status(400).json({ msg: "Selecione um arquivo para enviar." });
 
-    // ✅ CORREÇÃO AQUI: Adicionamos ', email' no SELECT
+    // ✅ Verifica se o cliente existe e pega o EMAIL
     const checkCliente = await pool.query(
         'SELECT id, nome, email FROM users WHERE id = $1', 
         [cliente_id]
@@ -76,7 +76,7 @@ router.post(
         addRandomSuffix: true
     });
 
-    // Salva no banco
+    // Salva no banco (Agora inclui visualizado_em como NULL por padrão, mas é bom garantir na query se não tiver default no banco)
     const novoDoc = await pool.query(
         `INSERT INTO documents 
         (user_id, titulo, url_arquivo, nome_original, tamanho_bytes, formato) 
@@ -88,17 +88,18 @@ router.post(
     // ✅ ENVIO DE E-MAIL SEGURO
     const dadosCliente = checkCliente.rows[0];
     
-    // Só tenta enviar se o email existir (evita o erro "No recipients defined")
     if (dadosCliente.email) {
         try {
             console.log(`Enviando aviso para ${dadosCliente.email}...`);
-            await enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo);
-            console.log("Aviso enviado.");
+            // O await aqui é opcional se não quiser travar a resposta, mas garante o log correto
+            enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo)
+                .then(() => console.log("Aviso enviado."))
+                .catch(err => console.error("Erro assíncrono no envio:", err));
         } catch (emailErr) {
-            console.error("Erro no envio de email (ignorado para não travar upload):", emailErr);
+            console.error("Erro no envio de email:", emailErr);
         }
     } else {
-        console.warn(`Cliente ${dadosCliente.nome} não tem e-mail cadastrado. Aviso não enviado.`);
+        console.warn(`Cliente ${dadosCliente.nome} não tem e-mail cadastrado.`);
     }
 
     return res.json({ 
@@ -114,6 +115,7 @@ router.post(
     return res.status(500).json({ msg: "Erro no servidor" });
   }
 });
+
 // ======================================================
 // 3. DELETAR DOCUMENTO (Somente Admin)
 // ======================================================
@@ -142,7 +144,7 @@ router.delete('/documentos/:id', verificarToken, validate(deleteDocumentSchema),
                 token: process.env.BLOB_READ_WRITE_TOKEN
             });
         } catch (error) {
-            console.error("Erro ao apagar do Blob (pode já ter sido apagado):", error);
+            console.error("Erro ao apagar do Blob:", error);
         }
     }
 
@@ -177,10 +179,7 @@ router.get('/clientes/buscar', verificarToken, validate(searchClientSchema), asy
       [`%${nome}%`]
     );
     
-    if (resultado.rows.length === 0) {
-        return res.status(404).json({ msg: "Nenhum cliente encontrado." });
-    }
-
+    
     return res.json(resultado.rows);
 
   } catch (err) {
@@ -201,6 +200,7 @@ router.get('/clientes/:id/documentos', verificarToken, validate(getClientDetails
       return res.status(403).json({ msg: "Acesso negado." });
     }
 
+ 
     const query = `
       SELECT 
         u.id, u.nome, u.email, u.cpf, u.telefone,
@@ -210,8 +210,11 @@ router.get('/clientes/:id/documentos', verificarToken, validate(getClientDetails
               'id_doc', d.id,
               'titulo', d.titulo,
               'url', d.url_arquivo,
-              'data_upload', d.data_upload
-            ) 
+              'tamanho_bytes', d.tamanho_bytes, 
+              'formato', d.formato,
+              'data_upload', d.data_upload,
+              'visualizado_em', d.visualizado_em
+            ) ORDER BY d.data_upload DESC
           ) FILTER (WHERE d.id IS NOT NULL), 
           '[]'
         ) AS documentos
@@ -232,6 +235,27 @@ router.get('/clientes/:id/documentos', verificarToken, validate(getClientDetails
   } catch (err) {
     console.error(err);
     return res.status(500).json({ msg: "Erro ao carregar detalhes." });
+  }
+});
+
+// ======================================================
+// 6. CONFIRMAÇÃO DE LEITURA (Novo)
+// ======================================================
+router.patch('/documents/:id/visualizar', verificarToken, async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  
+  try {
+
+    await pool.query(
+        `UPDATE documents 
+         SET visualizado_em = NOW() 
+         WHERE id = $1 AND user_id = $2`, 
+        [id, req.userId]
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("Erro ao marcar visualização:", err);
+    return res.status(500).json({ msg: "Erro ao registrar leitura" });
   }
 });
 
