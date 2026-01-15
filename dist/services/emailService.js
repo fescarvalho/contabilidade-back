@@ -7,7 +7,7 @@ exports.enviarEmailNovoDocumento = exports.enviarEmailRecuperacao = void 0;
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
-// Configuração para usar o Gmail DE VERDADE
+// Configuração do Transporter
 const transporter = nodemailer_1.default.createTransport({
     service: 'gmail',
     auth: {
@@ -15,6 +15,8 @@ const transporter = nodemailer_1.default.createTransport({
         pass: process.env.GOOGLE_API_KEY
     }
 });
+// Padronize o remetente aqui para não dar erro de permissão
+const REMETENTE_PADRAO = `"Leandro Abreu Contabilidade" <${process.env.GOOGLE_EMAIL}>`;
 const enviarEmailRecuperacao = async (destinatario, link) => {
     console.log(`📨 Enviando e-mail para: ${destinatario}`);
     const htmlContent = `
@@ -28,8 +30,8 @@ const enviarEmailRecuperacao = async (destinatario, link) => {
   `;
     try {
         await transporter.sendMail({
-            from: '"Leandro Abreu" <leandrocontabil2010@hotmail.com>', // Tem que ser igual ao user acima
-            to: destinatario, // AGORA FUNCIONA PARA QUALQUER UM!
+            from: REMETENTE_PADRAO, // Usa o e-mail do Gmail autenticado
+            to: destinatario,
             subject: 'Redefinição de Senha',
             html: htmlContent,
         });
@@ -42,10 +44,9 @@ const enviarEmailRecuperacao = async (destinatario, link) => {
     }
 };
 exports.enviarEmailRecuperacao = enviarEmailRecuperacao;
-// Adicione essa nova função no final do arquivo, mantendo a de recuperação
 const enviarEmailNovoDocumento = async (emailDestino, nomeCliente, tituloDoc) => {
     try {
-        const linkPlataforma = "https://leandro-abreu-contabilidade.vercel.app/usuario"; // Link do Login
+        const linkPlataforma = "https://leandro-abreu-contabilidade.vercel.app/usuario";
         const htmlContent = `
       <div style="font-family: Arial, sans-serif; color: #333;">
         <h2>Olá, ${nomeCliente}!</h2>
@@ -60,26 +61,20 @@ const enviarEmailNovoDocumento = async (emailDestino, nomeCliente, tituloDoc) =>
         <a href="${linkPlataforma}" style="background-color: #C5A059; color: black; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
           Acessar Painel
         </a>
-        
-        <p style="font-size: 12px; color: #666; margin-top: 30px;">
-          Não responda a este e-mail.
-        </p>
       </div>
     `;
-        // Aqui usamos a mesma configuração que você já tem no 'transporter'
-        // Se você usa Resend, Nodemailer, etc, adapte a chamada abaixo:
         await transporter.sendMail({
-            from: '"Leandro Abreu Contabilidade" <leandroabreucontabilidade@gmail.com>',
+            from: REMETENTE_PADRAO, // Usa o mesmo remetente padronizado
             to: emailDestino,
             subject: `📄 Novo Documento: ${tituloDoc}`,
             html: htmlContent,
         });
-        console.log(`E-mail de documento enviado para ${emailDestino}`);
+        console.log(`✅ E-mail de documento enviado para ${emailDestino}`);
         return true;
     }
     catch (error) {
-        console.error("Erro ao enviar e-mail de documento:", error);
-        return false; // Não queremos travar o upload se o e-mail falhar, só logar o erro
+        console.error("❌ Erro ao enviar e-mail de documento:", error);
+        return false;
     }
 };
 exports.enviarEmailNovoDocumento = enviarEmailNovoDocumento;
