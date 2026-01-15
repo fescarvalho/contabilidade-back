@@ -15,6 +15,11 @@ const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const validateResource_1 = require("../middlewares/validateResource");
 const authSchemas_1 = require("../schemas/authSchemas");
 const router = (0, express_1.Router)();
+const loginLimiter = (0, express_rate_limit_1.default)({
+    windowMs: 15 * 60 * 1000, // 15 minutos
+    max: 5, // Só permite 5 tentativas erradas por IP
+    message: "Muitas tentativas de login. Conta bloqueada temporariamente por 15 minutos."
+});
 // Chave secreta para assinar o token de recuperação
 const JWT_SECRET = process.env.JWT_SECRET || "sua_chave_super_secreta_recuperacao";
 // ======================================================
@@ -53,7 +58,7 @@ router.post("/register", (0, validateResource_1.validate)(authSchemas_1.register
 // ======================================================
 // 2. LOGIN (Agora protegido pelo Zod)
 // ======================================================
-router.post("/login", (0, validateResource_1.validate)(authSchemas_1.loginSchema), async (req, res) => {
+router.post("/login", (0, validateResource_1.validate)(authSchemas_1.loginSchema), loginLimiter, async (req, res) => {
     const { email, senha } = req.body;
     try {
         const result = await db_1.pool.query("SELECT * FROM users WHERE email = $1", [email]);
@@ -65,11 +70,6 @@ router.post("/login", (0, validateResource_1.validate)(authSchemas_1.loginSchema
         if (!senhaBate) {
             return res.status(400).json({ msg: "E-mail ou senha incorretos." });
         }
-        const loginLimiter = (0, express_rate_limit_1.default)({
-            windowMs: 15 * 60 * 1000, // 15 minutos
-            max: 5, // Só permite 5 tentativas erradas por IP
-            message: "Muitas tentativas de login. Conta bloqueada temporariamente por 15 minutos."
-        });
         const secret = process.env.JWT_SECRET || "segredo_padrao_teste";
         const token = jsonwebtoken_1.default.sign({ id: user.id }, secret, { expiresIn: "1h" });
         return res.json({
