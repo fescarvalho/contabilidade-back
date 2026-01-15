@@ -18,7 +18,7 @@ const REMETENTE_OFICIAL = `"Leandro Abreu Contabilidade" <${process.env.GOOGLE_E
 const gerarHtmlTemplate = (titulo: string, corpo: string, link: string, textoBotao: string) => {
   
   // ✅ Link direto da sua logo
-
+  const urlImagemRodape = "https://drive.google.com/uc?export=view&id=1ZB6szeWOo4oVGgWGheCQAw30vynuXK3y";
 
   return `
     <!DOCTYPE html>
@@ -66,7 +66,8 @@ const gerarHtmlTemplate = (titulo: string, corpo: string, link: string, textoBot
 
               <tr>
                 <td bgcolor="#f9f9f9" style="padding: 30px 20px; text-align: center; border-top: 1px solid #eeeeee;">
-                 
+                  
+                  <img src="${urlImagemRodape}" alt="Leandro Abreu Contabilidade" width="200" style="display: block; margin: 0 auto 20px auto; border: 0; max-width: 100%; height: auto;">
 
                   <p style="margin: 0; font-size: 12px; color: #999999; line-height: 1.5;">
                     &copy; ${new Date().getFullYear()} Leandro Abreu Contabilidade.<br>
