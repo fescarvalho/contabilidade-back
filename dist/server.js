@@ -28,7 +28,7 @@ app.set('trust proxy', 1);
 app.use(limiter);
 const allowedOrigins = [
     'https://leandro-abreu-contabilidade.vercel.app',
-    'http://localhost:5173' // Para você testar localmente
+    'http://localhost:8080' // Para você testar localmente
 ];
 app.use((0, cors_1.default)({
     origin: (origin, callback) => {

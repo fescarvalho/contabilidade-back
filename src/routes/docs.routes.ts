@@ -200,12 +200,15 @@ router.get('/clientes/buscar', verificarToken, validate(searchClientSchema), asy
   }
 });
 
-// ======================================================
-// 5. DETALHES DE UM CLIENTE + DOCUMENTOS (COM FILTRO)
+// 5. DETALHES DE UM CLIENTE + DOCUMENTOS (COM PAGINAÇÃO 🚀)
 // ======================================================
 router.get('/clientes/:id/documentos', verificarToken, validate(getClientDetailsSchema), async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const { month, year } = req.query;
+  
+  // ✅ Paginação
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 10;
 
   try {
     if (!req.userId || !(await checkAdmin(req.userId))) {
@@ -213,49 +216,59 @@ router.get('/clientes/:id/documentos', verificarToken, validate(getClientDetails
     }
 
     // Configura filtro de data
-    let dateFilter = {};
+    let dateFilter: any = { user_id: Number(id) }; // Filtra pelo ID do usuário
+    
     if (month && year) {
         const start = new Date(Number(year), Number(month) - 1, 1);
         const end = new Date(Number(year), Number(month), 1);
-        dateFilter = {
-            data_upload: { gte: start, lt: end }
-        };
+        dateFilter.data_upload = { gte: start, lt: end };
     }
 
-    // ✅ Query poderosa do Prisma: Busca usuário E seus documentos (JOIN)
-    const cliente = await prisma.users.findUnique({
-        where: { id: Number(id) },
-        select: {
-            id: true, nome: true, email: true, cpf: true, telefone: true,
-            documents: {
-                where: dateFilter,
-                orderBy: { data_upload: 'desc' },
-                select: {
-                    id: true, // Frontend espera 'id' ou 'id_doc'? Vamos mapear abaixo.
-                    titulo: true,
-                    url_arquivo: true,
-                    tamanho_bytes: true,
-                    formato: true,
-                    data_upload: true,
-                    visualizado_em: true
-                }
+    // ✅ Executa 3 operações em paralelo (Muito rápido)
+    const [cliente, totalDocs, documentos] = await Promise.all([
+        // 1. Busca dados do Cliente
+        prisma.users.findUnique({
+            where: { id: Number(id) },
+            select: { id: true, nome: true, email: true, cpf: true, telefone: true }
+        }),
+
+        // 2. Conta TOTAL de documentos (para saber quantas páginas existem)
+        prisma.documents.count({ where: dateFilter }),
+
+        // 3. Busca documentos DA PÁGINA ATUAL
+        prisma.documents.findMany({
+            where: dateFilter,
+            take: limit,              // Pega 10
+            skip: (page - 1) * limit, // Pula X
+            orderBy: { data_upload: 'desc' },
+            select: {
+                id: true, titulo: true, url_arquivo: true,
+                tamanho_bytes: true, formato: true,
+                data_upload: true, visualizado_em: true
             }
-        }
-    });
+        })
+    ]);
 
     if (!cliente) {
       return res.status(404).json({ msg: "Cliente não encontrado." });
     }
 
-    // Ajuste fino para manter compatibilidade com o Frontend (mapear 'id' para 'id_doc' se necessário)
-    // O frontend que fizemos usa `doc.id || doc.id_doc`, então o `id` nativo do Prisma funciona.
+    // Monta a resposta no formato novo
     const resposta = {
-        ...cliente,
-        documentos: cliente.documents.map((d: any) => ({
-            ...d,
-            id_doc: d.id, // Mantendo compatibilidade legada
-            url: d.url_arquivo // Mantendo compatibilidade legada
-        }))
+        cliente: cliente, // Dados do cliente
+        documentos: {     // Objeto de paginação
+            data: documentos.map((d:any) => ({
+                ...d,
+                id_doc: d.id, // Compatibilidade
+                url: d.url_arquivo
+            })),
+            meta: {
+                total: totalDocs,
+                page,
+                lastPage: Math.ceil(totalDocs / limit),
+                limit
+            }
+        }
     };
     
     return res.json(serializeBigInt(resposta));
@@ -265,7 +278,6 @@ router.get('/clientes/:id/documentos', verificarToken, validate(getClientDetails
     return res.status(500).json({ msg: "Erro ao carregar detalhes." });
   }
 });
-
 // ======================================================
 // 6. CONFIRMAÇÃO DE LEITURA
 // ======================================================

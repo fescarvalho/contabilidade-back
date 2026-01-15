@@ -8,9 +8,11 @@ import authRoutes from './routes/auth.routes';
 import docsRoutes from './routes/docs.routes';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+
 (BigInt.prototype as any).toJSON = function () {
   return Number(this);
 };
+
 const app = express();
 app.use(helmet());
 
@@ -27,7 +29,7 @@ app.use(limiter);
 
 const allowedOrigins = [
   'https://leandro-abreu-contabilidade.vercel.app', 
-  'http://localhost:5173' // Para você testar localmente
+  'http://localhost:8080' // Para você testar localmente
 ];
 app.use(cors({
   origin: (origin, callback) => {
