@@ -1,5 +1,3 @@
-
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,16 +8,17 @@ datasource db {
 }
 
 model documents {
-  id             Int       @id @default(autoincrement())
-  user_id        Int?
-  titulo         String    @db.VarChar(100)
-  url_arquivo    String
-  nome_original  String?   @db.VarChar(255)
-  tamanho_bytes  BigInt?
-  formato        String?   @db.VarChar(50)
-  data_upload    DateTime? @default(now()) @db.Timestamp(6)
-  visualizado_em DateTime? @db.Timestamp(6)
-  users          users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id              Int       @id @default(autoincrement())
+  user_id         Int?
+  titulo          String    @db.VarChar(100)
+  url_arquivo     String
+  nome_original   String?   @db.VarChar(255)
+  tamanho_bytes   BigInt?
+  formato         String?   @db.VarChar(50)
+  data_upload     DateTime? @default(now()) @db.Timestamp(6)
+  visualizado_em  DateTime? @db.Timestamp(6)
+  data_vencimento DateTime?
+  users           users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model users {

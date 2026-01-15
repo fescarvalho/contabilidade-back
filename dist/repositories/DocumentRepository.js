@@ -52,7 +52,8 @@ exports.DocumentRepository = {
                 url_arquivo: data.url,
                 nome_original: data.nomeOriginal,
                 tamanho_bytes: data.tamanho,
-                formato: data.formato
+                formato: data.formato,
+                data_vencimento: data.dataVencimento
             }
         });
     },

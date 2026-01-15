@@ -49,7 +49,7 @@ export const DocumentRepository = {
     };
   },
 
-  create: async (data: { userId: number, titulo: string, url: string, nomeOriginal: string, tamanho: number, formato: string }) => {
+  create: async (data: { userId: number, titulo: string, url: string, nomeOriginal: string, tamanho: number, formato: string, dataVencimento?: Date }) => {
     return await prisma.documents.create({
       data: {
         user_id: data.userId,
@@ -57,7 +57,8 @@ export const DocumentRepository = {
         url_arquivo: data.url,
         nome_original: data.nomeOriginal,
         tamanho_bytes: data.tamanho,
-        formato: data.formato
+        formato: data.formato,
+        data_vencimento: data.dataVencimento
       }
     });
   },
