@@ -52,15 +52,16 @@ router.post(
         return res.status(403).json({ msg: "Acesso negado. Apenas admins." });
     }
 
-    // O Zod já garantiu que cliente_id e titulo existem!
     const { cliente_id, titulo } = req.body; 
     const file = req.file;
 
-    // O Zod não valida o arquivo binário (req.file), então validamos manualmente aqui
     if (!file) return res.status(400).json({ msg: "Selecione um arquivo para enviar." });
 
-    // Verifica se o cliente existe
-    const checkCliente = await pool.query('SELECT id, nome FROM users WHERE id = $1', [cliente_id]);
+    // ✅ CORREÇÃO AQUI: Adicionamos ', email' no SELECT
+    const checkCliente = await pool.query(
+        'SELECT id, nome, email FROM users WHERE id = $1', 
+        [cliente_id]
+    );
 
     if (checkCliente.rowCount === 0) {
         return res.status(404).json({ 
@@ -84,16 +85,26 @@ router.post(
         [cliente_id, titulo, blob.url, file.originalname, file.size, file.mimetype]
     );
 
+    // ✅ ENVIO DE E-MAIL SEGURO
     const dadosCliente = checkCliente.rows[0];
-    await enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo)
-      .then(() => console.log("Aviso enviado!"))
-      .catch(err => console.error("Falha no aviso:", err));
+    
+    // Só tenta enviar se o email existir (evita o erro "No recipients defined")
+    if (dadosCliente.email) {
+        try {
+            console.log(`Enviando aviso para ${dadosCliente.email}...`);
+            await enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo);
+            console.log("Aviso enviado.");
+        } catch (emailErr) {
+            console.error("Erro no envio de email (ignorado para não travar upload):", emailErr);
+        }
+    } else {
+        console.warn(`Cliente ${dadosCliente.nome} não tem e-mail cadastrado. Aviso não enviado.`);
+    }
 
     return res.json({ 
-        msg: `Arquivo enviado para ${checkCliente.rows[0].nome} com sucesso!`, 
+        msg: `Arquivo enviado para ${dadosCliente.nome} com sucesso!`, 
         documento: novoDoc.rows[0] 
     });
-
   
   } catch (err) {
     console.error(err);
@@ -103,7 +114,6 @@ router.post(
     return res.status(500).json({ msg: "Erro no servidor" });
   }
 });
-
 // ======================================================
 // 3. DELETAR DOCUMENTO (Somente Admin)
 // ======================================================
