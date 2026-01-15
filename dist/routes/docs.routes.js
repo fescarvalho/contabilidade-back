@@ -7,6 +7,7 @@ const express_1 = require("express");
 const multer_1 = __importDefault(require("multer"));
 const blob_1 = require("@vercel/blob");
 const db_1 = require("../db");
+const emailService_1 = require("../services/emailService");
 const auth_1 = require("../middlewares/auth");
 // --- NOVOS IMPORTS ---
 const validateResource_1 = require("../middlewares/validateResource");
@@ -62,6 +63,10 @@ router.post('/upload', auth_1.verificarToken, upload.single('arquivo'), (0, vali
         (user_id, titulo, url_arquivo, nome_original, tamanho_bytes, formato) 
         VALUES ($1, $2, $3, $4, $5, $6) 
         RETURNING *`, [cliente_id, titulo, blob.url, file.originalname, file.size, file.mimetype]);
+        const dadosCliente = checkCliente.rows[0];
+        (0, emailService_1.enviarEmailNovoDocumento)(dadosCliente.email, dadosCliente.nome, titulo)
+            .then(() => console.log("Aviso enviado!"))
+            .catch(err => console.error("Falha no aviso:", err));
         return res.json({
             msg: `Arquivo enviado para ${checkCliente.rows[0].nome} com sucesso!`,
             documento: novoDoc.rows[0]
