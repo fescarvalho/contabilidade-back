@@ -13,12 +13,13 @@ const validate = (schema) => (req, res, next) => {
     }
     catch (e) {
         if (e instanceof zod_1.ZodError) {
+            console.log("ERRO DE VALIDAÇÃO ZOD:", JSON.stringify(e, null, 2));
             return res.status(400).json({
                 msg: "Dados inválidos",
                 errors: e.issues.map((issue) => ({
                     campo: issue.path[1],
-                    mensagem: issue.message
-                }))
+                    mensagem: issue.message,
+                })),
             });
         }
         return res.status(400).json({ msg: "Erro inesperado na validação" });

@@ -14,7 +14,7 @@ model documents {
   url_arquivo     String
   nome_original   String?   @db.VarChar(255)
   tamanho_bytes   BigInt?
-  formato         String?   @db.VarChar(50)
+  formato         String    @db.Text
   data_upload     DateTime? @default(now()) @db.Timestamp(6)
   visualizado_em  DateTime? @db.Timestamp(6)
   data_vencimento DateTime?
