@@ -79,6 +79,9 @@ app.use(auth_routes_1.default);
 app.use(docs_routes_1.default);
 const PORT = process.env.PORT || 3000;
 // 7. IMPORTANTE: Trocamos app.listen por httpServer.listen
-httpServer.listen(PORT, () => {
-    console.log(`🚀 SERVIDOR + SOCKET RODANDO NA PORTA ${PORT}`);
-});
+if (process.env.NODE_ENV !== 'production') {
+    httpServer.listen(PORT, () => {
+        console.log(`🚀 SERVIDOR RODANDO LOCALMENTE NA PORTA ${PORT}`);
+    });
+}
+exports.default = app;
