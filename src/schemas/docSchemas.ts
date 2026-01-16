@@ -1,11 +1,23 @@
 import { z } from "zod";
-
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const ACCEPTED_TYPES = [
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+  "image/jpeg",
+  "image/png",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+];
 export const uploadSchema = z.object({
   body: z.object({
-    // O Multer transforma tudo em string no req.body, então validamos como string
-    // e checamos se é numérico
-    cliente_id: z.string().min(1, "ID do cliente é obrigatório").regex(/^\d+$/, "ID deve ser um número"),
-    titulo: z.string().min(1, "Título é obrigatório"),
+    cliente_id: z.string(),
+    titulo: z.string(),
+    vencimento: z.string().optional(),
+  }),
+  // Se você valida o arquivo aqui:
+  file: z.any().refine((file) => ACCEPTED_TYPES.includes(file?.mimetype), {
+    message: "Apenas PDF, Word, Excel e Imagens são aceitos.",
   }),
 });
 

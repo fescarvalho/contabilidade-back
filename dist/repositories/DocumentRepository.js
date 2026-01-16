@@ -5,43 +5,46 @@ const prisma_1 = require("../lib/prisma");
 exports.DocumentRepository = {
     // ✅ Agora aceita 'page' e 'limit'
     findByUserId: async (userId, month, year, page = 1, limit = 10) => {
-        let dateFilter = {};
-        // Configura o filtro de data
+        const skip = (page - 1) * limit;
+        // Configuração do filtro de data
+        let where = { user_id: userId };
         if (month && year) {
             const start = new Date(Number(year), Number(month) - 1, 1);
             const end = new Date(Number(year), Number(month), 1);
-            dateFilter = {
-                data_upload: {
-                    gte: start,
-                    lt: end,
-                }
-            };
+            where.data_upload = { gte: start, lt: end };
         }
-        const where = {
-            user_id: userId,
-            ...dateFilter
-        };
-        // 🚀 O Pulo do Gato: Prisma Transaction
-        // Fazemos duas consultas ao mesmo tempo: Contar o total E pegar os dados.
-        const [total, documents] = await prisma_1.prisma.$transaction([
-            prisma_1.prisma.documents.count({ where }), // 1. Conta quantos existem no total
+        // Executa a contagem e a busca em uma transação para performance
+        const [total, data] = await prisma_1.prisma.$transaction([
+            prisma_1.prisma.documents.count({ where }),
             prisma_1.prisma.documents.findMany({
                 where,
-                take: limit, // Pega X itens
-                skip: (page - 1) * limit, // Pula os anteriores
-                orderBy: {
-                    data_upload: 'desc'
-                }
-            })
+                take: limit,
+                skip: skip,
+                orderBy: { data_upload: "desc" },
+                select: {
+                    id: true,
+                    titulo: true,
+                    url_arquivo: true,
+                    tamanho_bytes: true,
+                    formato: true,
+                    data_upload: true,
+                    visualizado_em: true,
+                    data_vencimento: true, // ✅ INDISPENSÁVEL PARA APARECER NO FRONT
+                },
+            }),
         ]);
         return {
-            data: documents,
+            data: data.map((d) => ({
+                ...d,
+                id_doc: d.id,
+                url: d.url_arquivo,
+            })),
             meta: {
                 total,
                 page,
                 lastPage: Math.ceil(total / limit),
-                limit
-            }
+                limit,
+            },
         };
     },
     create: async (data) => {
@@ -53,24 +56,24 @@ exports.DocumentRepository = {
                 nome_original: data.nomeOriginal,
                 tamanho_bytes: data.tamanho,
                 formato: data.formato,
-                data_vencimento: data.dataVencimento
-            }
+                data_vencimento: data.dataVencimento,
+            },
         });
     },
     markAsViewed: async (docId, userId) => {
         await prisma_1.prisma.documents.updateMany({
             where: { id: docId, user_id: userId },
-            data: { visualizado_em: new Date() }
+            data: { visualizado_em: new Date() },
         });
     },
     delete: async (docId) => {
         return await prisma_1.prisma.documents.delete({
-            where: { id: docId }
+            where: { id: docId },
         });
     },
     findById: async (docId) => {
         return await prisma_1.prisma.documents.findUnique({
-            where: { id: docId }
+            where: { id: docId },
         });
-    }
+    },
 };

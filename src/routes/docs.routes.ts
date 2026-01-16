@@ -1,366 +1,345 @@
-import { Router, Response } from 'express';
-import multer from 'multer';
-import { put, del } from '@vercel/blob';
-import { prisma } from '../lib/prisma'; // ✅ Importando o Prisma Client
-import { DocumentRepository } from '../repositories/DocumentRepository';
-import { enviarEmailNovoDocumento } from '../services/emailService';
-import { verificarToken, AuthRequest } from '../middlewares/auth';
+import { Router, Response } from "express";
+import multer from "multer";
+import { put, del } from "@vercel/blob";
+import { prisma } from "../lib/prisma";
+import { DocumentRepository } from "../repositories/DocumentRepository";
+import { enviarEmailNovoDocumento } from "../services/emailService";
+import { verificarToken, AuthRequest } from "../middlewares/auth";
 
-import { validate } from '../middlewares/validateResource';
-import { 
-  uploadSchema, 
-  deleteDocumentSchema, 
-  searchClientSchema, 
-  getClientDetailsSchema 
-} from '../schemas/docSchemas';
+import { validate } from "../middlewares/validateResource";
+import {
+  uploadSchema,
+  deleteDocumentSchema,
+  searchClientSchema,
+  getClientDetailsSchema,
+} from "../schemas/docSchemas";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// --- HELPER: Serializar BigInt para JSON ---
-// (Evita erro "Do not know how to serialize a BigInt")
 const serializeBigInt = (data: any) => {
-    return JSON.parse(JSON.stringify(data, (_, v) => 
-        typeof v === 'bigint' ? v.toString() : v
-    ));
+  return JSON.parse(
+    JSON.stringify(data, (_, v) => (typeof v === "bigint" ? v.toString() : v)),
+  );
 };
 
-// --- HELPER: Verificar se é Admin ---
 const checkAdmin = async (userId: number) => {
-    const user = await prisma.users.findUnique({ 
-        where: { id: userId },
-        select: { tipo_usuario: true }
-    });
-    return user?.tipo_usuario === 'admin';
+  const user = await prisma.users.findUnique({
+    where: { id: userId },
+    select: { tipo_usuario: true },
+  });
+  return user?.tipo_usuario === "admin";
 };
 
 // ======================================================
-// 1. LISTAR MEUS DOCUMENTOS (Com Paginação)
+// 1. LISTAR MEUS DOCUMENTOS (Cliente)
 // ======================================================
-router.get('/meus-documentos', verificarToken, async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.userId) return res.status(401).json({ msg: "Usuário não identificado." });
+router.get(
+  "/meus-documentos",
+  verificarToken,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.userId) return res.status(401).json({ msg: "Usuário não identificado." });
 
-    const { month, year } = req.query;
-    
-    // Pegamos a página e o limite da query (ou usamos padrão 1 e 10)
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 10;
+      const { month, year } = req.query;
+      const page = Number(req.query.page) || 1;
+      const limit = Number(req.query.limit) || 10;
 
-    const resultado = await DocumentRepository.findByUserId(
-        req.userId, 
-        month as string | undefined, 
+      // ✅ O DocumentRepository.findByUserId deve incluir data_vencimento no retorno
+      const resultado = await DocumentRepository.findByUserId(
+        req.userId,
+        month as string | undefined,
         year as string | undefined,
         page,
-        limit
-    );
-    
-    // Serializa o BigInt tanto nos dados quanto nos metadados (se houver)
-    return res.json(serializeBigInt(resultado));
+        limit,
+      );
 
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ msg: "Erro ao buscar documentos" });
-  }
-});
+      return res.json(serializeBigInt(resultado));
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ msg: "Erro ao buscar documentos" });
+    }
+  },
+);
 
 // ======================================================
-// 2. UPLOAD (POST) - Com Zod e Multer
+// 2. UPLOAD (POST) - CORRIGIDO ✅
 // ======================================================
 router.post(
-  '/upload', 
-  verificarToken, 
-  upload.single('arquivo'), 
-  validate(uploadSchema), 
+  "/upload",
+  verificarToken,
+  upload.single("arquivo"),
+  validate(uploadSchema),
   async (req: AuthRequest, res: Response) => {
-  
-  try {
-    if (!req.userId || !(await checkAdmin(req.userId))) {
+    try {
+      if (!req.userId || !(await checkAdmin(req.userId))) {
         return res.status(403).json({ msg: "Acesso negado. Apenas admins." });
-    }
+      }
 
-    const { cliente_id, titulo } = req.body; 
-    const file = req.file;
+      // ✅ ADICIONADO: 'vencimento' capturado do corpo da requisição
+      const { cliente_id, titulo, vencimento } = req.body;
+      const file = req.file;
 
-    if (!file) return res.status(400).json({ msg: "Selecione um arquivo para enviar." });
+      if (!file)
+        return res.status(400).json({ msg: "Selecione um arquivo para enviar." });
 
-    // ✅ Verifica se o cliente existe e pega o EMAIL com Prisma
-    const dadosCliente = await prisma.users.findUnique({
+      const dadosCliente = await prisma.users.findUnique({
         where: { id: Number(cliente_id) },
-        select: { id: true, nome: true, email: true }
-    });
+        select: { id: true, nome: true, email: true },
+      });
 
-    if (!dadosCliente) {
-        return res.status(404).json({ msg: `Erro: O cliente com ID ${cliente_id} não existe.` });
-    }
+      if (!dadosCliente) {
+        return res
+          .status(404)
+          .json({ msg: `Erro: O cliente com ID ${cliente_id} não existe.` });
+      }
 
-    // Upload para a Vercel Blob
-    const blob = await put(file.originalname, file.buffer, { 
-        access: 'public',
+      const blob = await put(file.originalname, file.buffer, {
+        access: "public",
         token: process.env.BLOB_READ_WRITE_TOKEN,
-        addRandomSuffix: true
-    });
+        addRandomSuffix: true,
+      });
 
-    // ✅ Salva no banco usando o Repositório
-    const novoDoc = await DocumentRepository.create({
+      // ✅ CORREÇÃO: Passando dataVencimento para o repositório
+      const novoDoc = await DocumentRepository.create({
         userId: Number(cliente_id),
         titulo: titulo,
         url: blob.url,
         nomeOriginal: file.originalname,
         tamanho: file.size,
-        formato: file.mimetype
-    });
+        formato: file.mimetype,
+        dataVencimento: vencimento ? new Date(vencimento) : undefined, // ✅ Mapeado aqui
+      });
 
-    // ✅ ENVIO DE E-MAIL
-    if (dadosCliente.email) {
-        enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo)
-            .catch(err => console.error("Erro assíncrono no envio de e-mail:", err));
-    } else {
-        console.warn(`Cliente ${dadosCliente.nome} não tem e-mail cadastrado.`);
+      if (dadosCliente.email) {
+        enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo).catch(
+          (err) => console.error("Erro assíncrono no envio de e-mail:", err),
+        );
+      }
+
+      return res.json({
+        msg: `Arquivo enviado para ${dadosCliente.nome} com sucesso!`,
+        documento: serializeBigInt(novoDoc),
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ msg: "Erro no servidor" });
     }
-
-    return res.json({ 
-        msg: `Arquivo enviado para ${dadosCliente.nome} com sucesso!`, 
-        documento: serializeBigInt(novoDoc)
-    });
-  
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ msg: "Erro no servidor" });
-  }
-});
+  },
+);
 
 // ======================================================
-// 3. DELETAR DOCUMENTO (Somente Admin)
+// 3. DELETAR DOCUMENTO
 // ======================================================
-router.delete('/documentos/:id', verificarToken, validate(deleteDocumentSchema), async (req: AuthRequest, res: Response) => {
-  const { id } = req.params;
+router.delete(
+  "/documentos/:id",
+  verificarToken,
+  validate(deleteDocumentSchema),
+  async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    try {
+      if (!req.userId || !(await checkAdmin(req.userId))) {
+        return res.status(403).json({ msg: "Acesso negado." });
+      }
+      const documento = await DocumentRepository.findById(Number(id));
+      if (!documento) return res.status(404).json({ msg: "Documento não encontrado." });
 
-  try {
-    if (!req.userId || !(await checkAdmin(req.userId))) {
-      return res.status(403).json({ msg: "Acesso negado." });
-    }
-
-    // ✅ Busca o documento para pegar a URL (para deletar do Blob)
-    const documento = await DocumentRepository.findById(Number(id));
-    
-    if (!documento) {
-      return res.status(404).json({ msg: "Documento não encontrado." });
-    }
-
-    // Apagar da Vercel
-    if (documento.url_arquivo) {
+      if (documento.url_arquivo) {
         try {
-            await del(documento.url_arquivo, { token: process.env.BLOB_READ_WRITE_TOKEN });
+          await del(documento.url_arquivo, { token: process.env.BLOB_READ_WRITE_TOKEN });
         } catch (error) {
-            console.error("Erro ao apagar do Blob:", error);
+          console.error("Erro ao apagar do Blob:", error);
         }
+      }
+
+      await DocumentRepository.delete(Number(id));
+      return res.json({ msg: "Documento apagado com sucesso." });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ msg: "Erro ao deletar documento." });
     }
-
-    // ✅ Deleta do banco com Prisma
-    await DocumentRepository.delete(Number(id));
-
-    return res.json({ msg: "Documento apagado com sucesso." });
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ msg: "Erro ao deletar documento." });
-  }
-});
+  },
+);
 
 // ======================================================
-// 4. BUSCAR CLIENTE (Busca Parcial)
+// 4. BUSCAR CLIENTE
 // ======================================================
-router.get('/clientes/buscar', verificarToken, validate(searchClientSchema), async (req: AuthRequest, res: Response) => {
-  const nome = (req.query.nome as string).trim();
+router.get(
+  "/clientes/buscar",
+  verificarToken,
+  validate(searchClientSchema),
+  async (req: AuthRequest, res: Response) => {
+    const nome = (req.query.nome as string).trim();
+    try {
+      if (!req.userId || !(await checkAdmin(req.userId)))
+        return res.status(403).json({ msg: "Acesso negado." });
 
-  try {
-    if (!req.userId || !(await checkAdmin(req.userId))) {
-      return res.status(403).json({ msg: "Acesso negado." });
-    }
-
-    // ✅ Busca com Prisma (ILIKE vira mode: 'insensitive')
-    const clientes = await prisma.users.findMany({
+      const clientes = await prisma.users.findMany({
         where: {
-            tipo_usuario: 'cliente',
-            nome: {
-                contains: nome,
-                mode: 'insensitive' // Ignora maiúsculas/minúsculas
-            }
+          tipo_usuario: "cliente",
+          nome: { contains: nome, mode: "insensitive" },
         },
-        orderBy: { nome: 'asc' },
-        select: { id: true, nome: true, email: true, cpf: true, telefone: true }
-    });
-    
-    return res.json(clientes);
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ msg: "Erro ao buscar cliente." });
-  }
-});
-
-// 5. DETALHES DE UM CLIENTE + DOCUMENTOS (COM PAGINAÇÃO 🚀)
-// ======================================================
-router.get('/clientes/:id/documentos', verificarToken, validate(getClientDetailsSchema), async (req: AuthRequest, res: Response) => {
-  const { id } = req.params;
-  const { month, year } = req.query;
-  
-  // ✅ Paginação
-  const page = Number(req.query.page) || 1;
-  const limit = Number(req.query.limit) || 10;
-
-  try {
-    if (!req.userId || !(await checkAdmin(req.userId))) {
-      return res.status(403).json({ msg: "Acesso negado." });
+        orderBy: { nome: "asc" },
+        select: { id: true, nome: true, email: true, cpf: true, telefone: true },
+      });
+      return res.json(clientes);
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ msg: "Erro ao buscar cliente." });
     }
+  },
+);
 
-    // Configura filtro de data
-    let dateFilter: any = { user_id: Number(id) }; // Filtra pelo ID do usuário
-    
-    if (month && year) {
+// ======================================================
+// 5. DETALHES DO CLIENTE (Admin) - CORRIGIDO ✅
+// ======================================================
+router.get(
+  "/clientes/:id/documentos",
+  verificarToken,
+  validate(getClientDetailsSchema),
+  async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    const { month, year } = req.query;
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 10;
+
+    try {
+      if (!req.userId || !(await checkAdmin(req.userId)))
+        return res.status(403).json({ msg: "Acesso negado." });
+
+      let dateFilter: any = { user_id: Number(id) };
+      if (month && year) {
         const start = new Date(Number(year), Number(month) - 1, 1);
         const end = new Date(Number(year), Number(month), 1);
         dateFilter.data_upload = { gte: start, lt: end };
-    }
+      }
 
-    // ✅ Executa 3 operações em paralelo (Muito rápido)
-    const [cliente, totalDocs, documentos] = await Promise.all([
-        // 1. Busca dados do Cliente
+      const [cliente, totalDocs, documentos] = await Promise.all([
         prisma.users.findUnique({
-            where: { id: Number(id) },
-            select: { id: true, nome: true, email: true, cpf: true, telefone: true }
+          where: { id: Number(id) },
+          select: { id: true, nome: true, email: true, cpf: true, telefone: true },
         }),
-
-        // 2. Conta TOTAL de documentos (para saber quantas páginas existem)
         prisma.documents.count({ where: dateFilter }),
-
-        // 3. Busca documentos DA PÁGINA ATUAL
         prisma.documents.findMany({
-            where: dateFilter,
-            take: limit,              // Pega 10
-            skip: (page - 1) * limit, // Pula X
-            orderBy: { data_upload: 'desc' },
-            select: {
-                id: true, titulo: true, url_arquivo: true,
-                tamanho_bytes: true, formato: true,
-                data_upload: true, visualizado_em: true
-            }
-        })
-    ]);
+          where: dateFilter,
+          take: limit,
+          skip: (page - 1) * limit,
+          orderBy: { data_upload: "desc" },
+          select: {
+            id: true,
+            titulo: true,
+            url_arquivo: true,
+            tamanho_bytes: true,
+            formato: true,
+            data_upload: true,
+            visualizado_em: true,
+            data_vencimento: true, // ✅ ADICIONADO: Estava faltando no select!
+          },
+        }),
+      ]);
 
-    if (!cliente) {
-      return res.status(404).json({ msg: "Cliente não encontrado." });
+      if (!cliente) return res.status(404).json({ msg: "Cliente não encontrado." });
+
+      const resposta = {
+        cliente: cliente,
+        documentos: {
+          data: documentos.map((d: any) => ({
+            ...d,
+            id_doc: d.id,
+            url: d.url_arquivo,
+            data_vencimento: d.data_vencimento, // ✅ Garante o mapeamento
+          })),
+          meta: {
+            total: totalDocs,
+            page,
+            lastPage: Math.ceil(totalDocs / limit),
+            limit,
+          },
+        },
+      };
+      return res.json(serializeBigInt(resposta));
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ msg: "Erro ao carregar detalhes." });
     }
+  },
+);
 
-    // Monta a resposta no formato novo
-    const resposta = {
-        cliente: cliente, // Dados do cliente
-        documentos: {     // Objeto de paginação
-            data: documentos.map((d:any) => ({
-                ...d,
-                id_doc: d.id, // Compatibilidade
-                url: d.url_arquivo
-            })),
-            meta: {
-                total: totalDocs,
-                page,
-                lastPage: Math.ceil(totalDocs / limit),
-                limit
-            }
-        }
-    };
-    
-    return res.json(serializeBigInt(resposta));
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ msg: "Erro ao carregar detalhes." });
-  }
-});
 // ======================================================
 // 6. CONFIRMAÇÃO DE LEITURA
 // ======================================================
-router.patch('/documents/:id/visualizar', verificarToken, async (req: AuthRequest, res: Response) => {
-  const { id } = req.params;
-  
-  try {
-    if (!req.userId) return res.status(401).json({ msg: "Erro auth" });
-
-    // ✅ Usa o repositório
-    await DocumentRepository.markAsViewed(Number(id), req.userId);
-    
-    return res.json({ ok: true });
-  } catch (err) {
-    console.error("Erro ao marcar visualização:", err);
-    return res.status(500).json({ msg: "Erro ao registrar leitura" });
-  }
-});
-
-// ======================================================
-// 7. DASHBOARD DE VISÃO GERAL (BI)
-// ======================================================
-router.get('/dashboard/resumo', verificarToken, async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.userId || !(await checkAdmin(req.userId))) {
-        return res.status(403).json({ msg: "Acesso negado." });
+router.patch(
+  "/documents/:id/visualizar",
+  verificarToken,
+  async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    try {
+      if (!req.userId) return res.status(401).json({ msg: "Erro auth" });
+      await DocumentRepository.markAsViewed(Number(id), req.userId);
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("Erro ao marcar visualização:", err);
+      return res.status(500).json({ msg: "Erro ao registrar leitura" });
     }
+  },
+);
 
-    const hoje = new Date();
-    const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
-    const inicioProxMes = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 1);
+// ======================================================
+// 7. DASHBOARD (BI)
+// ======================================================
+router.get(
+  "/dashboard/resumo",
+  verificarToken,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.userId || !(await checkAdmin(req.userId)))
+        return res.status(403).json({ msg: "Acesso negado." });
 
-    // ✅ Executa queries em paralelo para ser mais rápido
-    const [clientesAtivos, uploadsMes, totalDocs, docsVisualizados, pendencias] = await Promise.all([
-        // 1. Total Clientes
-        prisma.users.count({ where: { tipo_usuario: 'cliente' } }),
-        
-        // 2. Uploads Mês
-        prisma.documents.count({
-            where: {
-                data_upload: { gte: inicioMes, lt: inicioProxMes }
-            }
-        }),
+      const hoje = new Date();
+      const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+      const inicioProxMes = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 1);
 
-        // 3. Stats Leitura (Total)
-        prisma.documents.count(),
-
-        // 4. Stats Leitura (Vistos)
-        prisma.documents.count({ where: { visualizado_em: { not: null } } }),
-
-        // 5. Pendências (Últimos 5 não lidos)
-        prisma.documents.findMany({
+      const [clientesAtivos, uploadsMes, totalDocs, docsVisualizados, pendencias] =
+        await Promise.all([
+          prisma.users.count({ where: { tipo_usuario: "cliente" } }),
+          prisma.documents.count({
+            where: { data_upload: { gte: inicioMes, lt: inicioProxMes } },
+          }),
+          prisma.documents.count(),
+          prisma.documents.count({ where: { visualizado_em: { not: null } } }),
+          prisma.documents.findMany({
             where: { visualizado_em: null },
-            orderBy: { data_upload: 'desc' },
+            orderBy: { data_upload: "desc" },
             take: 5,
             select: {
-                id: true, titulo: true, data_upload: true,
-                users: { select: { nome: true } } // JOIN com usuario para pegar nome
-            }
-        })
-    ]);
+              id: true,
+              titulo: true,
+              data_upload: true,
+              users: { select: { nome: true } },
+            },
+          }),
+        ]);
 
-    const taxaLeitura = totalDocs === 0 ? 0 : Math.round((docsVisualizados / totalDocs) * 100);
-
-    // Formatar pendências para o formato que o front espera (flatten)
-    const pendenciasFormatadas = pendencias.map((p: any )=> ({
+      const taxaLeitura =
+        totalDocs === 0 ? 0 : Math.round((docsVisualizados / totalDocs) * 100);
+      const pendenciasFormatadas = pendencias.map((p: any) => ({
         id: p.id,
         titulo: p.titulo,
         data_upload: p.data_upload,
-        cliente_nome: p.users?.nome || "Desconhecido"
-    }));
+        cliente_nome: p.users?.nome || "Desconhecido",
+      }));
 
-    return res.json({
-      clientesAtivos,
-      uploadsMes,
-      taxaLeitura,
-      pendencias: pendenciasFormatadas
-    });
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ msg: "Erro ao carregar dashboard." });
-  }
-});
+      return res.json({
+        clientesAtivos,
+        uploadsMes,
+        taxaLeitura,
+        pendencias: pendenciasFormatadas,
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ msg: "Erro ao carregar dashboard." });
+    }
+  },
+);
 
 export default router;

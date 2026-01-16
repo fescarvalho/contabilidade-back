@@ -19,16 +19,16 @@ const router = (0, express_1.Router)();
 const loginLimiter = (0, express_rate_limit_1.default)({
     windowMs: 15 * 60 * 1000, // 15 minutos
     max: 5,
-    message: "Muitas tentativas de login. Conta bloqueada temporariamente por 15 minutos."
+    message: "Muitas tentativas de login. Conta bloqueada temporariamente por 15 minutos.",
 });
 const JWT_SECRET = process.env.JWT_SECRET || "sua_chave_super_secreta_recuperacao";
 // --- HELPER: Verificar Admin (Reutilizável) ---
 const checkAdmin = async (userId) => {
     const user = await prisma_1.prisma.users.findUnique({
         where: { id: userId },
-        select: { tipo_usuario: true }
+        select: { tipo_usuario: true },
     });
-    return user?.tipo_usuario === 'admin';
+    return user?.tipo_usuario === "admin";
 };
 // ======================================================
 // 1. REGISTRO
@@ -39,15 +39,14 @@ router.post("/register", (0, validateResource_1.validate)(authSchemas_1.register
         // Verifica duplicidade (Email ou CPF)
         const usuarioExistente = await prisma_1.prisma.users.findFirst({
             where: {
-                OR: [
-                    { email: email },
-                    { cpf: cpf }
-                ]
-            }
+                OR: [{ email: email }, { cpf: cpf }],
+            },
         });
         if (usuarioExistente) {
             if (usuarioExistente.email === email) {
-                return res.status(400).json({ msg: "Este e-mail já está em uso por outra conta." });
+                return res
+                    .status(400)
+                    .json({ msg: "Este e-mail já está em uso por outra conta." });
             }
             if (usuarioExistente.cpf === cpf) {
                 return res.status(400).json({ msg: "Este CPF já está cadastrado no sistema." });
@@ -63,10 +62,10 @@ router.post("/register", (0, validateResource_1.validate)(authSchemas_1.register
                 senha_hash: senhaHash,
                 cpf,
                 telefone,
-                tipo_usuario: "cliente"
+                tipo_usuario: "cliente",
             },
             // Seleciona o que retornar para não mandar a senha de volta
-            select: { id: true, nome: true, email: true, telefone: true }
+            select: { id: true, nome: true, email: true, telefone: true },
         });
         return res.json({ msg: "Usuário criado com segurança!", user: novoUsuario });
     }
@@ -82,7 +81,7 @@ router.post("/login", (0, validateResource_1.validate)(authSchemas_1.loginSchema
     const { email, senha } = req.body;
     try {
         const user = await prisma_1.prisma.users.findUnique({
-            where: { email: email }
+            where: { email: email },
         });
         if (!user) {
             return res.status(400).json({ msg: "E-mail ou senha incorretos." });
@@ -122,7 +121,7 @@ router.get("/clientes", auth_1.verificarToken, async (req, res) => {
         const clientes = await prisma_1.prisma.users.findMany({
             where: { tipo_usuario: "cliente" },
             orderBy: { nome: "asc" },
-            select: { id: true, nome: true, email: true, cpf: true, telefone: true }
+            select: { id: true, nome: true, email: true, cpf: true, telefone: true },
         });
         return res.json(clientes);
     }
@@ -147,7 +146,7 @@ router.delete("/users/:id", auth_1.verificarToken, async (req, res) => {
         // 1. Busca arquivos do cliente para apagar do Blob (Vercel)
         const arquivosDoCliente = await prisma_1.prisma.documents.findMany({
             where: { user_id: Number(id) },
-            select: { url_arquivo: true }
+            select: { url_arquivo: true },
         });
         for (const doc of arquivosDoCliente) {
             if (doc.url_arquivo) {
@@ -161,7 +160,7 @@ router.delete("/users/:id", auth_1.verificarToken, async (req, res) => {
         }
         // 2. Apaga registros de documentos no banco
         await prisma_1.prisma.documents.deleteMany({
-            where: { user_id: Number(id) }
+            where: { user_id: Number(id) },
         });
         // 3. Apaga o usuário
         // O Prisma lança erro se não achar, então usamos try/catch ou verificamos antes.
@@ -169,14 +168,15 @@ router.delete("/users/:id", auth_1.verificarToken, async (req, res) => {
         try {
             const usuarioDeletado = await prisma_1.prisma.users.delete({
                 where: { id: Number(id) },
-                select: { nome: true }
+                select: { nome: true },
             });
             return res.json({
                 msg: `Usuário ${usuarioDeletado.nome} e todos os seus arquivos foram removidos com sucesso.`,
             });
         }
         catch (e) {
-            if (e.code === 'P2025') { // Código Prisma para "Record not found"
+            if (e.code === "P2025") {
+                // Código Prisma para "Record not found"
                 return res.status(404).json({ msg: "Usuário não encontrado." });
             }
             throw e;
@@ -200,7 +200,14 @@ router.put("/users/:id", auth_1.verificarToken, async (req, res) => {
         const updatedUser = await prisma_1.prisma.users.update({
             where: { id: Number(id) },
             data: { nome, email, cpf, telefone },
-            select: { id: true, nome: true, email: true, cpf: true, telefone: true, tipo_usuario: true }
+            select: {
+                id: true,
+                nome: true,
+                email: true,
+                cpf: true,
+                telefone: true,
+                tipo_usuario: true,
+            },
         });
         return res.json({
             msg: "Dados atualizados com sucesso!",
@@ -211,7 +218,9 @@ router.put("/users/:id", auth_1.verificarToken, async (req, res) => {
         console.error(err);
         // P2002 é o código do Prisma para violação de Unique Constraint (Email ou CPF já existe)
         if (err.code === "P2002") {
-            return res.status(400).json({ msg: "Erro: Email ou CPF já cadastrado em outra conta." });
+            return res
+                .status(400)
+                .json({ msg: "Erro: Email ou CPF já cadastrado em outra conta." });
         }
         if (err.code === "P2025") {
             return res.status(404).json({ msg: "Usuário não encontrado." });
@@ -222,16 +231,16 @@ router.put("/users/:id", auth_1.verificarToken, async (req, res) => {
 // ======================================================
 // 6. ESQUECI A SENHA
 // ======================================================
-router.post('/forgot-password', (0, validateResource_1.validate)(authSchemas_1.forgotPasswordSchema), async (req, res) => {
+router.post("/forgot-password", (0, validateResource_1.validate)(authSchemas_1.forgotPasswordSchema), async (req, res) => {
     const { email } = req.body;
     try {
         const user = await prisma_1.prisma.users.findUnique({
-            where: { email }
+            where: { email },
         });
         if (!user) {
             return res.status(404).json({ msg: "E-mail não encontrado." });
         }
-        const token = jsonwebtoken_1.default.sign({ email: user.email }, JWT_SECRET, { expiresIn: '1h' });
+        const token = jsonwebtoken_1.default.sign({ email: user.email }, JWT_SECRET, { expiresIn: "1h" });
         const link = `https://leandro-abreu-contabilidade.vercel.app/redefinir-senha?token=${token}`;
         console.log(`Enviando para ${email}...`);
         const sucesso = await (0, emailService_1.enviarEmailRecuperacao)(email, link);
@@ -239,7 +248,9 @@ router.post('/forgot-password', (0, validateResource_1.validate)(authSchemas_1.f
             return res.json({ msg: "Link de recuperação enviado para seu e-mail!" });
         }
         else {
-            return res.status(500).json({ msg: "Erro ao enviar e-mail. Tente novamente mais tarde." });
+            return res
+                .status(500)
+                .json({ msg: "Erro ao enviar e-mail. Tente novamente mais tarde." });
         }
     }
     catch (error) {
@@ -250,7 +261,7 @@ router.post('/forgot-password', (0, validateResource_1.validate)(authSchemas_1.f
 // ======================================================
 // 7. RESETAR SENHA
 // ======================================================
-router.post('/reset-password', (0, validateResource_1.validate)(authSchemas_1.resetPasswordSchema), async (req, res) => {
+router.post("/reset-password", (0, validateResource_1.validate)(authSchemas_1.resetPasswordSchema), async (req, res) => {
     const { token, newPassword } = req.body;
     try {
         // 1. Valida Token
@@ -262,7 +273,7 @@ router.post('/reset-password', (0, validateResource_1.validate)(authSchemas_1.re
         // 3. Atualiza Banco
         await prisma_1.prisma.users.update({
             where: { email: email },
-            data: { senha_hash: hash }
+            data: { senha_hash: hash },
         });
         return res.json({ msg: "Senha alterada com sucesso!" });
     }
