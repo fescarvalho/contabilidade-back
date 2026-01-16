@@ -5,8 +5,11 @@ import { prisma } from "../lib/prisma";
 import { DocumentRepository } from "../repositories/DocumentRepository";
 import { enviarEmailNovoDocumento } from "../services/emailService";
 import { verificarToken, AuthRequest } from "../middlewares/auth";
-
 import { validate } from "../middlewares/validateResource";
+
+import { NotificationRepository } from '../repositories/NotificationRepository';
+import { io } from '../server'; 
+
 import {
   uploadSchema,
   deleteDocumentSchema,
@@ -45,7 +48,6 @@ router.get(
       const page = Number(req.query.page) || 1;
       const limit = Number(req.query.limit) || 10;
 
-      // ✅ O DocumentRepository.findByUserId deve incluir data_vencimento no retorno
       const resultado = await DocumentRepository.findByUserId(
         req.userId,
         month as string | undefined,
@@ -63,7 +65,7 @@ router.get(
 );
 
 // ======================================================
-// 2. UPLOAD (POST) - CORRIGIDO ✅
+// 2. UPLOAD (POST) - COM NOTIFICAÇÃO ✅
 // ======================================================
 router.post(
   "/upload",
@@ -76,7 +78,6 @@ router.post(
         return res.status(403).json({ msg: "Acesso negado. Apenas admins." });
       }
 
-      // ✅ ADICIONADO: 'vencimento' capturado do corpo da requisição
       const { cliente_id, titulo, vencimento } = req.body;
       const file = req.file;
 
@@ -100,7 +101,6 @@ router.post(
         addRandomSuffix: true,
       });
 
-      // ✅ CORREÇÃO: Passando dataVencimento para o repositório
       const novoDoc = await DocumentRepository.create({
         userId: Number(cliente_id),
         titulo: titulo,
@@ -108,13 +108,38 @@ router.post(
         nomeOriginal: file.originalname,
         tamanho: file.size,
         formato: file.mimetype,
-        dataVencimento: vencimento ? new Date(vencimento) : undefined, // ✅ Mapeado aqui
+        dataVencimento: vencimento ? new Date(vencimento) : undefined,
       });
 
+      // Envio de Email (Assíncrono)
       if (dadosCliente.email) {
         enviarEmailNovoDocumento(dadosCliente.email, dadosCliente.nome, titulo).catch(
           (err) => console.error("Erro assíncrono no envio de e-mail:", err),
         );
+      }
+
+      // ✅ LÓGICA DE NOTIFICAÇÃO (PERSISTÊNCIA + SOCKET)
+      try {
+        // 1. Salvar no Banco
+        const novaNotificacao = await NotificationRepository.create(
+          Number(cliente_id),
+          "Novo Documento Recebido",
+          `O documento "${titulo}" foi adicionado.`,
+          novoDoc.url_arquivo // Link para o doc
+        );
+
+        // 2. Disparar Socket em Tempo Real
+        io.to(`user_${cliente_id}`).emit("nova_notificacao", {
+          id: novaNotificacao.id,
+          titulo: novaNotificacao.titulo,
+          mensagem: novaNotificacao.mensagem,
+          lida: false,
+          criado_em: novaNotificacao.criado_em
+        });
+        
+        console.log(`🔔 Notificação enviada para user_${cliente_id}`);
+      } catch (notifError) {
+        console.error("Erro ao processar notificação (não crítico):", notifError);
       }
 
       return res.json({
@@ -191,7 +216,7 @@ router.get(
 );
 
 // ======================================================
-// 5. DETALHES DO CLIENTE (Admin) - CORRIGIDO ✅
+// 5. DETALHES DO CLIENTE (Admin)
 // ======================================================
 router.get(
   "/clientes/:id/documentos",
@@ -233,7 +258,7 @@ router.get(
             formato: true,
             data_upload: true,
             visualizado_em: true,
-            data_vencimento: true, // ✅ ADICIONADO: Estava faltando no select!
+            data_vencimento: true,
           },
         }),
       ]);
@@ -247,7 +272,7 @@ router.get(
             ...d,
             id_doc: d.id,
             url: d.url_arquivo,
-            data_vencimento: d.data_vencimento, // ✅ Garante o mapeamento
+            data_vencimento: d.data_vencimento,
           })),
           meta: {
             total: totalDocs,
@@ -341,5 +366,63 @@ router.get(
     }
   },
 );
+
+// ======================================================
+// 8. ROTAS DE NOTIFICAÇÕES (NOVAS) ✅
+// ======================================================
+
+// Listar notificações do usuário
+router.get(
+  '/notifications/:userId',
+  verificarToken,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { userId } = req.params;
+      
+      // Segurança: Usuário só pode ver suas próprias notificações (a menos que seja admin)
+      if (Number(userId) !== req.userId && !(await checkAdmin(req.userId!))) {
+          return res.status(403).json({ msg: "Acesso negado" });
+      }
+
+      const notificacoes = await NotificationRepository.findByUser(Number(userId));
+      return res.json(notificacoes);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ msg: "Erro ao buscar notificações" });
+    }
+});
+
+// Marcar como lida
+router.patch(
+  '/notifications/:id/read',
+  verificarToken,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      await NotificationRepository.markAsRead(Number(id));
+      return res.json({ msg: "Lida" });
+    } catch (error) {
+      return res.status(500).json({ msg: "Erro ao atualizar notificação" });
+    }
+});
+
+// Marcar todas como lidas
+router.patch(
+  '/notifications/read-all',
+  verificarToken,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { userId } = req.body;
+      
+      if (Number(userId) !== req.userId) {
+         return res.status(403).json({ msg: "Acesso negado" });
+      }
+
+      await NotificationRepository.markAllRead(Number(userId));
+      return res.json({ msg: "Todas marcadas como lidas" });
+    } catch (error) {
+      return res.status(500).json({ msg: "Erro ao limpar notificações" });
+    }
+});
 
 export default router;

@@ -11,6 +11,8 @@ const DocumentRepository_1 = require("../repositories/DocumentRepository");
 const emailService_1 = require("../services/emailService");
 const auth_1 = require("../middlewares/auth");
 const validateResource_1 = require("../middlewares/validateResource");
+const NotificationRepository_1 = require("../repositories/NotificationRepository");
+const server_1 = require("../server");
 const docSchemas_1 = require("../schemas/docSchemas");
 const router = (0, express_1.Router)();
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
@@ -34,7 +36,6 @@ router.get("/meus-documentos", auth_1.verificarToken, async (req, res) => {
         const { month, year } = req.query;
         const page = Number(req.query.page) || 1;
         const limit = Number(req.query.limit) || 10;
-        // ✅ O DocumentRepository.findByUserId deve incluir data_vencimento no retorno
         const resultado = await DocumentRepository_1.DocumentRepository.findByUserId(req.userId, month, year, page, limit);
         return res.json(serializeBigInt(resultado));
     }
@@ -44,14 +45,13 @@ router.get("/meus-documentos", auth_1.verificarToken, async (req, res) => {
     }
 });
 // ======================================================
-// 2. UPLOAD (POST) - CORRIGIDO ✅
+// 2. UPLOAD (POST) - COM NOTIFICAÇÃO ✅
 // ======================================================
 router.post("/upload", auth_1.verificarToken, upload.single("arquivo"), (0, validateResource_1.validate)(docSchemas_1.uploadSchema), async (req, res) => {
     try {
         if (!req.userId || !(await checkAdmin(req.userId))) {
             return res.status(403).json({ msg: "Acesso negado. Apenas admins." });
         }
-        // ✅ ADICIONADO: 'vencimento' capturado do corpo da requisição
         const { cliente_id, titulo, vencimento } = req.body;
         const file = req.file;
         if (!file)
@@ -70,7 +70,6 @@ router.post("/upload", auth_1.verificarToken, upload.single("arquivo"), (0, vali
             token: process.env.BLOB_READ_WRITE_TOKEN,
             addRandomSuffix: true,
         });
-        // ✅ CORREÇÃO: Passando dataVencimento para o repositório
         const novoDoc = await DocumentRepository_1.DocumentRepository.create({
             userId: Number(cliente_id),
             titulo: titulo,
@@ -78,10 +77,29 @@ router.post("/upload", auth_1.verificarToken, upload.single("arquivo"), (0, vali
             nomeOriginal: file.originalname,
             tamanho: file.size,
             formato: file.mimetype,
-            dataVencimento: vencimento ? new Date(vencimento) : undefined, // ✅ Mapeado aqui
+            dataVencimento: vencimento ? new Date(vencimento) : undefined,
         });
+        // Envio de Email (Assíncrono)
         if (dadosCliente.email) {
             (0, emailService_1.enviarEmailNovoDocumento)(dadosCliente.email, dadosCliente.nome, titulo).catch((err) => console.error("Erro assíncrono no envio de e-mail:", err));
+        }
+        // ✅ LÓGICA DE NOTIFICAÇÃO (PERSISTÊNCIA + SOCKET)
+        try {
+            // 1. Salvar no Banco
+            const novaNotificacao = await NotificationRepository_1.NotificationRepository.create(Number(cliente_id), "Novo Documento Recebido", `O documento "${titulo}" foi adicionado.`, novoDoc.url_arquivo // Link para o doc
+            );
+            // 2. Disparar Socket em Tempo Real
+            server_1.io.to(`user_${cliente_id}`).emit("nova_notificacao", {
+                id: novaNotificacao.id,
+                titulo: novaNotificacao.titulo,
+                mensagem: novaNotificacao.mensagem,
+                lida: false,
+                criado_em: novaNotificacao.criado_em
+            });
+            console.log(`🔔 Notificação enviada para user_${cliente_id}`);
+        }
+        catch (notifError) {
+            console.error("Erro ao processar notificação (não crítico):", notifError);
         }
         return res.json({
             msg: `Arquivo enviado para ${dadosCliente.nome} com sucesso!`,
@@ -145,7 +163,7 @@ router.get("/clientes/buscar", auth_1.verificarToken, (0, validateResource_1.val
     }
 });
 // ======================================================
-// 5. DETALHES DO CLIENTE (Admin) - CORRIGIDO ✅
+// 5. DETALHES DO CLIENTE (Admin)
 // ======================================================
 router.get("/clientes/:id/documentos", auth_1.verificarToken, (0, validateResource_1.validate)(docSchemas_1.getClientDetailsSchema), async (req, res) => {
     const { id } = req.params;
@@ -180,7 +198,7 @@ router.get("/clientes/:id/documentos", auth_1.verificarToken, (0, validateResour
                     formato: true,
                     data_upload: true,
                     visualizado_em: true,
-                    data_vencimento: true, // ✅ ADICIONADO: Estava faltando no select!
+                    data_vencimento: true,
                 },
             }),
         ]);
@@ -193,7 +211,7 @@ router.get("/clientes/:id/documentos", auth_1.verificarToken, (0, validateResour
                     ...d,
                     id_doc: d.id,
                     url: d.url_arquivo,
-                    data_vencimento: d.data_vencimento, // ✅ Garante o mapeamento
+                    data_vencimento: d.data_vencimento,
                 })),
                 meta: {
                     total: totalDocs,
@@ -272,6 +290,50 @@ router.get("/dashboard/resumo", auth_1.verificarToken, async (req, res) => {
     catch (err) {
         console.error(err);
         return res.status(500).json({ msg: "Erro ao carregar dashboard." });
+    }
+});
+// ======================================================
+// 8. ROTAS DE NOTIFICAÇÕES (NOVAS) ✅
+// ======================================================
+// Listar notificações do usuário
+router.get('/notifications/:userId', auth_1.verificarToken, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        // Segurança: Usuário só pode ver suas próprias notificações (a menos que seja admin)
+        if (Number(userId) !== req.userId && !(await checkAdmin(req.userId))) {
+            return res.status(403).json({ msg: "Acesso negado" });
+        }
+        const notificacoes = await NotificationRepository_1.NotificationRepository.findByUser(Number(userId));
+        return res.json(notificacoes);
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ msg: "Erro ao buscar notificações" });
+    }
+});
+// Marcar como lida
+router.patch('/notifications/:id/read', auth_1.verificarToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        await NotificationRepository_1.NotificationRepository.markAsRead(Number(id));
+        return res.json({ msg: "Lida" });
+    }
+    catch (error) {
+        return res.status(500).json({ msg: "Erro ao atualizar notificação" });
+    }
+});
+// Marcar todas como lidas
+router.patch('/notifications/read-all', auth_1.verificarToken, async (req, res) => {
+    try {
+        const { userId } = req.body;
+        if (Number(userId) !== req.userId) {
+            return res.status(403).json({ msg: "Acesso negado" });
+        }
+        await NotificationRepository_1.NotificationRepository.markAllRead(Number(userId));
+        return res.json({ msg: "Todas marcadas como lidas" });
+    }
+    catch (error) {
+        return res.status(500).json({ msg: "Erro ao limpar notificações" });
     }
 });
 exports.default = router;

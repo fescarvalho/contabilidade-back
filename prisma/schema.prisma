@@ -10,25 +10,44 @@ datasource db {
 model documents {
   id              Int       @id @default(autoincrement())
   user_id         Int?
-  titulo          String    @db.VarChar(100)
-  url_arquivo     String
-  nome_original   String?   @db.VarChar(255)
+  
+  // ✅ ALTERADO: @db.Text para evitar erro de texto longo
+  titulo          String    @db.Text 
+  url_arquivo     String    @db.Text
+  nome_original   String?   @db.Text
+  
   tamanho_bytes   BigInt?
   formato         String    @db.Text
   data_upload     DateTime? @default(now()) @db.Timestamp(6)
   visualizado_em  DateTime? @db.Timestamp(6)
   data_vencimento DateTime?
+  
   users           users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
+model notifications {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  titulo     String   @db.VarChar(255)
+  mensagem   String   @db.Text
+  lida       Boolean  @default(false)
+  link       String?  @db.Text
+  criado_em  DateTime @default(now())
+
+  // Relacionamento: Se o usuário for deletado, apaga as notificações dele (Cascade)
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
 model users {
-  id           Int         @id @default(autoincrement())
-  nome         String      @db.VarChar(100)
-  email        String      @unique(map: "unique_email") @db.VarChar(100)
-  senha_hash   String      @db.VarChar(255)
-  cpf          String?     @unique(map: "unique_cpf") @db.VarChar(20)
-  criado_em    DateTime?   @default(now()) @db.Timestamp(6)
-  tipo_usuario String?     @default("cliente") @db.VarChar(20)
-  telefone     String?     @db.VarChar(20)
-  documents    documents[]
+  id            Int             @id @default(autoincrement())
+  nome          String          @db.VarChar(100)
+  email         String          @unique(map: "unique_email") @db.VarChar(100)
+  senha_hash    String          @db.VarChar(255)
+  cpf           String?         @unique(map: "unique_cpf") @db.VarChar(20)
+  criado_em     DateTime?       @default(now()) @db.Timestamp(6)
+  tipo_usuario  String?         @default("cliente") @db.VarChar(20)
+  telefone      String?         @db.VarChar(20)
+  
+  documents     documents[]
+  notifications notifications[] // ✅ NOVO: Relacionamento com notificações
 }
